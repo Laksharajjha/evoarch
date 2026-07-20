@@ -1,0 +1,463 @@
+name: evoarch-enterprise-demo
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
+
+services:
+  web-portal:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/web-portal:2026.07.17
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    environment:
+      PUBLIC_API_BASE_URL: http://edge-gateway:8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      RELEASE_CHANNEL: production
+    depends_on:
+      edge-gateway:
+        condition: service_healthy
+    networks:
+      - public
+      - observability
+    ports:
+      - "8088:8080"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+
+  edge-gateway:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/edge-gateway:2026.07.17
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 1536M
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:8080
+      CATALOG_SERVICE_URL: http://catalog-service:8080
+      CART_SERVICE_URL: http://cart-service:8080
+      CHECKOUT_SERVICE_URL: http://checkout-service:8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      RATE_LIMIT_REDIS_HOST: redis-cache
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      cart-service:
+        condition: service_healthy
+      checkout-service:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+    networks:
+      - public
+      - application
+      - data
+      - observability
+    ports:
+      - "8080:8080"
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/readyz"]
+
+  auth-service:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/auth-service:2026.07.17
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1024M
+    environment:
+      DATABASE_URL: postgresql://evoarch:${POSTGRES_PASSWORD}@postgres-primary:5432/auth
+      SESSION_CACHE_HOST: redis-cache
+      TOKEN_SIGNING_KEY_FILE: /run/secrets/jwt_signing_key
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+    secrets:
+      - jwt_signing_key
+    networks:
+      - application
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/app/auth-service", "healthcheck"]
+
+  catalog-service:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/catalog-service:2026.07.17
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "1.25"
+          memory: 1280M
+    environment:
+      DATABASE_HOST: postgres-primary
+      DATABASE_NAME: catalog
+      CACHE_URL: redis://redis-cache:6379/2
+      INVENTORY_SERVICE_URL: http://inventory-service:8080
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+    networks:
+      - application
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/app/catalog-service", "healthcheck"]
+
+  cart-service:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/cart-service:2026.07.17
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 768M
+    environment:
+      CART_CACHE_HOST: redis-cache
+      EVENT_BUS_BROKERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      redis-cache:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    networks:
+      - application
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/app/cart-service", "healthcheck"]
+
+  checkout-service:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/checkout-service:2026.07.17
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 2048M
+    environment:
+      CART_SERVICE_URL: http://cart-service:8080
+      PAYMENT_SERVICE_URL: http://payment-service:8080
+      INVENTORY_SERVICE_URL: http://inventory-service:8080
+      EVENT_BUS_BROKERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      cart-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - application
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/app/checkout-service", "healthcheck"]
+
+  payment-service:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/payment-service:2026.07.17
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 1536M
+    environment:
+      PAYMENT_PROVIDER_BASE_URL: https://payments.example.invalid
+      PAYMENT_LEDGER_DSN: postgresql://evoarch:${POSTGRES_PASSWORD}@postgres-primary:5432/payments
+      EVENT_BUS_BROKERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - application
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/app/payment-service", "healthcheck"]
+
+  inventory-service:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/inventory-service:2026.07.17
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: "1.25"
+          memory: 1024M
+    environment:
+      INVENTORY_DATABASE_URL: postgresql://evoarch:${POSTGRES_PASSWORD}@postgres-primary:5432/inventory
+      INVENTORY_CACHE_HOST: redis-cache
+      EVENT_BUS_BROKERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      kafka-1:
+        condition: service_healthy
+    networks:
+      - application
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/app/inventory-service", "healthcheck"]
+
+  notification-worker:
+    <<: *service-defaults
+    image: ghcr.io/evoarch/notification-worker:2026.07.17
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 768M
+    environment:
+      EVENT_BUS_BROKERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      NOTIFICATION_DATABASE_URL: postgresql://evoarch:${POSTGRES_PASSWORD}@postgres-primary:5432/notifications
+      EMAIL_PROVIDER_URL: https://email.example.invalid
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      postgres-primary:
+        condition: service_healthy
+    networks:
+      - application
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/app/notification-worker", "healthcheck"]
+
+  postgres-primary:
+    <<: *service-defaults
+    image: postgres:16.4-alpine
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "2.00"
+          memory: 4096M
+    environment:
+      POSTGRES_DB: evoarch
+      POSTGRES_USER: evoarch
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U evoarch -d evoarch"]
+
+  redis-cache:
+    <<: *service-defaults
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "768mb", "--maxmemory-policy", "allkeys-lru"]
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 1024M
+    volumes:
+      - redis-data:/data
+    networks:
+      - data
+      - observability
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "ping"]
+
+  kafka-1:
+    <<: *service-defaults
+    image: bitnami/kafka:3.8
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 2048M
+    environment: &kafka-environment
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    volumes:
+      - kafka-1-data:/bitnami/kafka
+    networks:
+      - data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/opt/bitnami/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+
+  kafka-2:
+    <<: *service-defaults
+    image: bitnami/kafka:3.8
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 2048M
+    environment:
+      <<: *kafka-environment
+      KAFKA_CFG_NODE_ID: 2
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092
+    volumes:
+      - kafka-2-data:/bitnami/kafka
+    networks:
+      - data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/opt/bitnami/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+
+  kafka-3:
+    <<: *service-defaults
+    image: bitnami/kafka:3.8
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 2048M
+    environment:
+      <<: *kafka-environment
+      KAFKA_CFG_NODE_ID: 3
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092
+    volumes:
+      - kafka-3-data:/bitnami/kafka
+    networks:
+      - data
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "/opt/bitnami/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+
+  otel-collector:
+    <<: *service-defaults
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    configs:
+      - source: otel_config
+        target: /etc/otelcol-contrib/config.yaml
+    networks:
+      - observability
+    ports:
+      - "4318:4318"
+
+networks:
+  public:
+    driver: bridge
+  application:
+    driver: bridge
+    internal: true
+  data:
+    driver: bridge
+    internal: true
+  observability:
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-1-data:
+  kafka-2-data:
+  kafka-3-data:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  jwt_signing_key:
+    file: ./secrets/jwt_signing_key.pem
+
+configs:
+  otel_config:
+    content: |
+      receivers:
+        otlp:
+          protocols:
+            http:
+      exporters:
+        debug:
+      service:
+        pipelines:
+          traces:
+            receivers: [otlp]
+            exporters: [debug]
