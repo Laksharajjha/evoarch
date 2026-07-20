@@ -1,0 +1,1725 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0c0e" />
+    <title>EvoArch // Core</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+    <style>
+      :root { color-scheme: dark; }
+
+      * { box-sizing: border-box; }
+
+      body {
+        background: #0b0c0e;
+        text-rendering: optimizeLegibility;
+      }
+
+      html[data-theme="light"] { color-scheme: light; }
+
+      html[data-theme="light"] body,
+      html[data-theme="light"] #appShell {
+        background: #dfe4ea !important;
+        color: #1f2937 !important;
+      }
+
+      html[data-theme="light"] .header-row,
+      html[data-theme="light"] .metric-strip,
+      html[data-theme="light"] .console-panel,
+      html[data-theme="light"] .network-panel,
+      html[data-theme="light"] .shadow-graph-grid,
+      html[data-theme="light"] .shadow-graph-panel,
+      html[data-theme="light"] #terminal,
+      html[data-theme="light"] #synthesisWorkspace,
+      html[data-theme="light"] [class*="bg-[#0b0c0e]"],
+      html[data-theme="light"] [class*="bg-[#0c0d0f]"],
+      html[data-theme="light"] [class*="bg-[#0d0e10]"],
+      html[data-theme="light"] [class*="bg-[#0f1013]"],
+      html[data-theme="light"] [class*="bg-[#08090b]"],
+      html[data-theme="light"] [class*="bg-[#090a0c]"] {
+        background-color: #e8ecf1 !important;
+      }
+
+      html[data-theme="light"] [class*="border-[#1f2228]"],
+      html[data-theme="light"] [class*="border-[#30343b]"],
+      html[data-theme="light"] [class*="border-[#454a53]"] {
+        border-color: #c5ced8 !important;
+      }
+
+      html[data-theme="light"] [class*="text-[#f3f4f6]"],
+      html[data-theme="light"] [class*="text-[#e5e7eb]"],
+      html[data-theme="light"] [class*="text-[#d1d5db]"],
+      html[data-theme="light"] [class*="text-[#c4c8ce]"] {
+        color: #1f2937 !important;
+      }
+
+      html[data-theme="light"] [class*="text-[#858b95]"],
+      html[data-theme="light"] [class*="text-[#777d87]"],
+      html[data-theme="light"] [class*="text-[#69707a]"],
+      html[data-theme="light"] [class*="text-[#666c76]"],
+      html[data-theme="light"] [class*="text-[#626873]"],
+      html[data-theme="light"] [class*="text-[#5f6670]"],
+      html[data-theme="light"] [class*="text-[#555b66]"] {
+        color: #64748b !important;
+      }
+
+      html[data-theme="light"] .terminal-line { color: #334155; }
+      html[data-theme="light"] .terminal-time { color: #7c8999; }
+      html[data-theme="light"] .terminal-level { color: #475569; }
+      html[data-theme="light"] #cy-baseline,
+      html[data-theme="light"] #cy-proposed { background: #e3e8ee; }
+
+      .workstation-grid {
+        grid-template-columns: minmax(0, 1.72fr) minmax(340px, 0.78fr);
+        transition: grid-template-columns 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      .workstation-grid.console-collapsed {
+        grid-template-columns: minmax(0, 1fr) 0;
+      }
+
+      .console-panel {
+        min-width: 0;
+        opacity: 1;
+        transform: translateX(0);
+        transition: opacity 180ms ease, transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      .workstation-grid.console-collapsed .console-panel {
+        pointer-events: none;
+        opacity: 0;
+        transform: translateX(100%);
+      }
+
+      .shadow-graph-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        background: #08090b;
+        transition: grid-template-columns 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      .shadow-graph-panel {
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: #08090b;
+      }
+
+      .shadow-proposed-panel { display: none; }
+
+      .network-panel.shadow-active .shadow-graph-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .network-panel.shadow-active .shadow-proposed-panel { display: block; }
+
+      .intent-input {
+        position: relative;
+        z-index: 40;
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 2rem;
+      }
+
+      .intent-textarea {
+        position: absolute;
+        top: 0;
+        right: 0;
+        left: 0;
+        z-index: 50;
+        min-height: 2rem;
+        max-height: 14rem;
+        overflow-y: hidden;
+        scrollbar-width: thin;
+      }
+
+      .intent-textarea:focus {
+        overflow-y: auto;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.42);
+      }
+
+      .status-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 9999px;
+        background: #52525b;
+      }
+
+      .status-dot.online { background: #10b981; }
+      .status-dot.running { background: #f59e0b; animation: status-blink 1.1s steps(2, start) infinite; }
+      .status-dot.failed { background: #ef4444; }
+
+      .chaos-toggle:has(input:checked) { border-color: #ef4444; color: #fca5a5; }
+      .chaos-toggle:has(input:checked) .chaos-track { border-color: #ef4444; background: #ef4444; }
+      .chaos-toggle:has(input:checked) .chaos-thumb { transform: translateX(12px); }
+      .chaos-toggle:has(input:disabled) { cursor: wait; opacity: 0.5; }
+
+      @keyframes dynamicGlow {
+        0% { border-color: #1f2228; box-shadow: 0 0 5px rgba(255, 197, 0, 0.05); }
+        50% { border-color: #ffc500; box-shadow: 0 0 15px rgba(255, 197, 0, 0.2); }
+        100% { border-color: #1f2228; box-shadow: 0 0 5px rgba(255, 197, 0, 0.05); }
+      }
+
+      @keyframes synthesis-scan {
+        0% { transform: translateX(-115%); opacity: 0; }
+        20% { opacity: 0.32; }
+        80% { opacity: 0.18; }
+        100% { transform: translateX(115%); opacity: 0; }
+      }
+
+      .ai-cooking {
+        animation: dynamicGlow 2s infinite ease-in-out;
+        color: #ffc500 !important;
+        transform: translateZ(0);
+        will-change: border-color, box-shadow;
+      }
+
+      .ai-cooking::after {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        content: "";
+        background: linear-gradient(90deg, transparent, rgba(255, 197, 0, 0.08), transparent);
+        animation: synthesis-scan 2.4s infinite ease-in-out;
+        will-change: transform, opacity;
+      }
+
+      @keyframes optimization-request-pulse {
+        0%, 100% { border-color: #ffffff; box-shadow: 0 0 0 rgba(245, 158, 11, 0); }
+        50% { border-color: #fbbf24; box-shadow: 0 0 18px rgba(245, 158, 11, 0.38); }
+      }
+
+      #runButton.optimization-request-active {
+        animation: optimization-request-pulse 1.2s ease-in-out infinite;
+        will-change: border-color, box-shadow;
+      }
+
+      #runButton.rate-limit-cooldown {
+        animation: none;
+        border-color: #f59e0b;
+        background: #17120a;
+        box-shadow: 0 0 18px rgba(245, 158, 11, 0.28);
+        color: #fbbf24;
+        opacity: 1;
+      }
+
+      .terminal-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+      .terminal-scrollbar::-webkit-scrollbar-track { background: #101114; }
+      .terminal-scrollbar::-webkit-scrollbar-thumb { background: #30343b; }
+      .terminal-scrollbar::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+      .terminal-line { display: grid; grid-template-columns: auto 1fr; column-gap: 0.6rem; margin-bottom: 0.4rem; color: #b7bbc2; }
+      .terminal-time { color: #555b66; white-space: nowrap; }
+      .terminal-level { color: #9ca3af; }
+      .terminal-line.warning .terminal-level { color: #f59e0b; }
+      .terminal-line.success .terminal-level { color: #10b981; }
+      .terminal-line.error .terminal-level { color: #ef4444; }
+      .terminal-line.error { color: #fca5a5; }
+
+      .detail-title { color: #e5e7eb; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+      .detail-copy { margin-top: 0.35rem; color: #858b95; font-size: 10px; line-height: 1.55; }
+
+      .metric-strip {
+        display: flex;
+        height: 3.5rem;
+        overflow: hidden;
+      }
+
+      .metric-cell {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+      }
+
+      .metric-primary { flex: 0 0 calc(100% / 6); }
+      .metric-efficiency { flex: 0 0 50%; }
+      .metric-utilities { flex-wrap: nowrap; white-space: nowrap; }
+
+      #appShell {
+        transition: filter 220ms ease;
+      }
+
+      #appShell.access-gated {
+        filter: blur(10px);
+        pointer-events: none;
+        user-select: none;
+      }
+
+      #access-gate {
+        position: fixed;
+        z-index: 9999;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        background: rgba(8, 9, 11, 0.74);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        opacity: 1;
+        transition: opacity 240ms ease;
+      }
+
+      #access-gate.is-unlocking {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #access-gate[hidden] { display: none; }
+
+      #access-input.access-denied {
+        border-color: #ef4444;
+        box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.34), 0 0 20px rgba(127, 29, 29, 0.3);
+      }
+
+      #ingestButton.needs-topology {
+        border-color: #f59e0b;
+        color: #fbbf24;
+        box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.12);
+      }
+
+      #ingestButton.topology-ready {
+        border-color: #10b981;
+        color: #6ee7b7;
+      }
+
+      @keyframes status-blink {
+        50% { opacity: 0.28; }
+      }
+
+      @media (max-width: 1100px) {
+        body { overflow-y: auto; }
+        .workstation-grid { grid-template-columns: 1fr !important; }
+        .workstation-grid.console-collapsed { grid-template-columns: minmax(0, 1fr) 0 !important; }
+        .network-panel { min-height: 560px; }
+        .metric-strip { height: auto; flex-wrap: wrap; overflow: visible; }
+        .metric-primary { flex: 1 1 33.333%; min-height: 3rem; }
+        .metric-efficiency { flex: 1 1 100%; min-height: 3rem; border-top: 1px solid #1f2228; }
+      }
+
+      @media (max-width: 760px) {
+        .header-row { height: auto !important; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px; }
+        .intent-input { order: 3; flex-basis: 100%; }
+        .metric-primary { flex: 1 1 50%; }
+        .metric-efficiency { flex: 1 1 100%; align-items: flex-start; flex-wrap: wrap; }
+        .metric-cell { border-bottom: 1px solid #1f2228; }
+        .metric-utilities { flex-wrap: wrap; justify-content: flex-start; white-space: normal; }
+        .network-panel.shadow-active .shadow-graph-grid { grid-template-columns: minmax(0, 1fr); }
+      }
+    </style>
+  </head>
+  <body class="h-screen overflow-hidden bg-[#0b0c0e] font-sans text-[#e5e7eb] antialiased">
+    <div id="access-gate" role="dialog" aria-modal="true" aria-labelledby="access-gate-title">
+      <div class="w-full max-w-sm border border-[#30343b] bg-[#0b0c0e] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.58)]">
+        <p id="access-gate-title" class="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[#fbbf24]">EvoArch // Access Gate</p>
+        <p class="mt-2 font-mono text-[10px] leading-5 text-[#858b95]">Enter the access DNA to activate this optimization control plane.</p>
+        <input id="access-input" class="mt-5 h-10 w-full border border-[#30343b] bg-[#08090b] px-3 font-mono text-[11px] tracking-[0.06em] text-[#e5e7eb] outline-none transition-[border-color,box-shadow] placeholder:text-[#555b66] focus:border-[#f59e0b] focus:ring-1 focus:ring-[#f59e0b] disabled:cursor-wait disabled:opacity-60" type="password" autocomplete="off" placeholder="[ ENTER ACCESS DNA ]" aria-label="Access DNA" />
+        <p id="access-status" class="mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#555b66]" role="status" aria-live="polite">Press Enter to verify</p>
+      </div>
+    </div>
+
+    <div id="appShell" class="access-gated flex h-screen min-h-0 flex-col">
+      <header class="header-row relative z-20 flex h-12 shrink-0 items-center gap-3 border-b border-[#1f2228] bg-[#0b0c0e] px-3 sm:px-4">
+        <a href="/" class="flex shrink-0 items-center gap-2 border-r border-[#1f2228] pr-3" aria-label="EvoArch Core home">
+          <span class="grid h-6 w-6 place-items-center border border-[#454a53] bg-[#111317] font-mono text-[11px] font-bold text-[#f3f4f6]">E</span>
+          <span class="font-mono text-[11px] font-semibold tracking-[0.07em] text-[#f3f4f6]">EVOARCH // CORE</span>
+        </a>
+
+        <div class="hidden shrink-0 items-center gap-2 border-r border-[#1f2228] pr-3 text-[10px] text-[#818792] lg:flex">
+          <span id="connectionDot" class="status-dot"></span>
+          <span id="connectionText" class="font-mono uppercase tracking-[0.08em]">Stream initializing</span>
+        </div>
+
+        <input id="topologyFileInput" class="hidden" type="file" accept=".yaml,.yml,application/x-yaml,text/yaml" />
+        <button id="ingestButton" type="button" class="h-8 shrink-0 border border-[#1f2228] bg-[#0f1013] px-3 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#d1d5db] transition-colors hover:border-[#717780] hover:text-[#ffffff] focus:outline-none focus:ring-1 focus:ring-[#717780] disabled:cursor-wait disabled:opacity-50">
+          <span class="flex items-center gap-1.5">
+            <span id="ingestSpinner" class="hidden h-2.5 w-2.5 animate-spin rounded-full border-2 border-[#f59e0b] border-t-transparent"></span>
+            <span id="ingestButtonLabel">[ INGEST YAML ]</span>
+          </span>
+        </button>
+        <div id="ingestProgress" class="hidden shrink-0 items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.06em] text-[#f59e0b]" role="status" aria-live="polite">
+          <span id="ingestProgressDot" class="status-dot running"></span>
+          <span id="ingestProgressText">Extracting topology</span>
+        </div>
+
+        <label class="intent-input" for="optimizationPrompt">
+          <span class="pointer-events-none absolute left-2 top-2 z-[60] font-mono text-[10px] text-[#626873]">&gt;_</span>
+          <textarea id="optimizationPrompt" rows="1" maxlength="1200" autocomplete="off" class="intent-textarea w-full resize-none border border-[#1f2228] bg-[#0d0e10]/95 py-[7px] pl-7 pr-3 font-mono text-[11px] leading-[18px] text-[#e5e7eb] outline-none backdrop-blur-md transition-[border-color,box-shadow] placeholder:text-[#555b66] focus:border-[#f59e0b] focus:ring-1 focus:ring-[#f59e0b]" placeholder="Human intent: optimize latency, cost, resilience"></textarea>
+        </label>
+
+        <button id="runButton" type="button" class="h-8 shrink-0 border border-[#ffffff] bg-[#ffffff] px-3 font-sans text-[10px] font-semibold uppercase tracking-[0.06em] text-[#0b0c0e] transition-colors hover:bg-[#e2e8f0] focus:outline-none focus:ring-1 focus:ring-[#ffffff] disabled:cursor-wait disabled:opacity-50">
+          <span id="runButtonLabel">Trigger Autonomous Optimization</span>
+        </button>
+        <button id="themeToggle" type="button" class="h-8 shrink-0 border border-[#1f2228] bg-[#0f1013] px-2.5 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#c4c8ce] transition-colors hover:border-[#717780] hover:text-[#ffffff] focus:outline-none focus:ring-1 focus:ring-[#717780]" aria-label="Switch to light mode">[ ☼ LIGHT ]</button>
+      </header>
+
+      <section class="metric-strip shrink-0 border-b border-[#1f2228] bg-[#0d0e10]" aria-label="Live engine metrics">
+        <article class="metric-cell metric-primary gap-2 border-r border-[#1f2228] px-3 sm:px-4">
+          <p class="shrink-0 font-mono text-[9px] font-semibold tracking-[0.1em] text-[#666c76]">LATENCY (P99)</p>
+          <p id="latencyMetric" class="ml-auto font-mono text-[16px] font-semibold leading-none tracking-[-0.04em] text-[#f3f4f6]">—</p>
+        </article>
+        <article class="metric-cell metric-primary gap-2 border-r border-[#1f2228] px-3 sm:px-4">
+          <p class="shrink-0 font-mono text-[9px] font-semibold tracking-[0.1em] text-[#666c76]">COST/HR (USD)</p>
+          <p id="costMetric" class="ml-auto font-mono text-[16px] font-semibold leading-none tracking-[-0.04em] text-[#f3f4f6]">—</p>
+        </article>
+        <article class="metric-cell metric-primary gap-2 border-r border-[#1f2228] px-3 sm:px-4">
+          <p class="shrink-0 font-mono text-[9px] font-semibold tracking-[0.1em] text-[#666c76]">ACTIVE_NODES</p>
+          <p id="servicesMetric" class="ml-auto font-mono text-[16px] font-semibold leading-none tracking-[-0.04em] text-[#f3f4f6]">—</p>
+        </article>
+        <article class="metric-cell metric-efficiency justify-between gap-3 px-3 sm:px-4">
+          <div class="flex shrink-0 items-center gap-2">
+            <p class="font-mono text-[9px] font-semibold tracking-[0.1em] text-[#666c76]">GEN_EFFICIENCY</p>
+            <span id="generationMetric" class="font-mono text-[9px] text-[#666c76]">GEN —</span>
+            <p id="efficiencyMetric" class="font-mono text-[16px] font-semibold leading-none tracking-[-0.04em] text-[#f3f4f6]">—</p>
+            <span id="saturationBadge" class="border border-[#30343b] px-1.5 py-0.5 font-mono text-[8px] text-[#777d87]">PARETO</span>
+          </div>
+          <div class="metric-utilities flex min-w-0 items-center justify-end gap-1.5">
+            <label class="chaos-toggle flex h-7 shrink-0 cursor-pointer items-center gap-1.5 border border-[#1f2228] bg-[#0f1013] px-2 font-mono text-[8px] font-semibold tracking-[0.05em] text-[#858b95] transition-colors hover:border-[#717780]" for="chaosMode" title="Inject shared one-replica failures into every generation">
+              <input id="chaosMode" class="sr-only" type="checkbox" aria-label="Enable Chaos Mode" />
+              <span>[ CHAOS MODE ]</span>
+              <span class="chaos-track flex h-3 w-6 items-center border border-[#454a53] bg-[#0b0c0e] p-[1px] transition-colors" aria-hidden="true">
+                <span class="chaos-thumb h-2 w-2 bg-[#858b95] transition-transform"></span>
+              </span>
+            </label>
+            <button id="consoleToggle" type="button" class="h-7 shrink-0 border border-[#1f2228] bg-[#0f1013] px-2 font-mono text-[8px] font-semibold tracking-[0.05em] text-[#c4c8ce] transition-colors hover:border-[#717780] hover:text-[#ffffff] focus:outline-none focus:ring-1 focus:ring-[#717780]" aria-controls="systemConsole" aria-expanded="true">[ ◨ CONSOLE ]</button>
+          </div>
+        </article>
+      </section>
+
+      <main id="workstationGrid" class="workstation-grid grid min-h-0 flex-1 overflow-hidden">
+        <section id="networkPanel" class="network-panel relative min-h-0 border-r border-[#1f2228] bg-[#0c0d0f]" aria-label="Network Fabric">
+          <div class="absolute inset-x-0 top-0 z-10 flex h-10 items-center justify-between border-b border-[#1f2228] bg-[#0d0e10] px-3">
+            <div class="flex items-center gap-2">
+              <span class="h-1.5 w-1.5 bg-[#10b981]"></span>
+              <span class="font-mono text-[10px] font-semibold tracking-[0.1em] text-[#c4c8ce]">NETWORK FABRIC</span>
+              <span class="hidden font-mono text-[9px] text-[#5f6670] sm:inline">/ LIVE TOPOLOGY MAP</span>
+            </div>
+            <div class="flex items-center gap-3 font-mono text-[9px] text-[#666c76]">
+              <span>ERLANG-C</span>
+              <span>NSGA-II</span>
+              <span>M/M/c</span>
+              <span class="hidden text-[8px] text-[#555b66] xl:inline">DRAG: PAN · SCROLL: ZOOM</span>
+              <button id="graphFitButton" type="button" class="h-6 border border-[#30343b] bg-[#0f1013] px-2 font-mono text-[8px] font-semibold tracking-[0.06em] text-[#858b95] transition-colors hover:border-[#f59e0b] hover:text-[#fbbf24]" title="Center and fit the topology into the canvas">[ FIT GRAPH ]</button>
+              <button id="trafficSimulationToggle" type="button" class="h-6 border border-[#30343b] bg-[#0f1013] px-2 font-mono text-[8px] font-semibold tracking-[0.06em] text-[#858b95] transition-colors hover:border-[#f59e0b] hover:text-[#fbbf24] disabled:cursor-not-allowed disabled:opacity-45" aria-pressed="false" title="Starts automatically when an optimization run begins" disabled>[ RUN TO START ]</button>
+            </div>
+          </div>
+
+          <div id="shadowGraphGrid" class="shadow-graph-grid absolute inset-x-0 bottom-0 top-10 min-h-0">
+            <section class="shadow-graph-panel relative border-r border-[#1f2228]" aria-label="Baseline topology graph">
+              <div class="absolute inset-x-0 top-0 z-10 flex h-7 items-center justify-between border-b border-[#1f2228] bg-[#08090b] px-3">
+                <span class="font-mono text-[8px] font-semibold tracking-[0.1em] text-[#fca5a5]">BASELINE / INPUT DNA</span>
+                <span class="font-mono text-[8px] uppercase tracking-[0.08em] text-[#7f1d1d]">Frozen under load</span>
+              </div>
+              <div id="cy-baseline" class="absolute inset-x-0 bottom-0 top-7" aria-label="Baseline microservice topology graph"></div>
+            </section>
+            <section id="proposedGraphPanel" class="shadow-graph-panel shadow-proposed-panel relative" aria-label="Proposed topology graph">
+              <div class="absolute inset-x-0 top-0 z-10 flex h-7 items-center justify-between border-b border-[#4a3411] bg-[#08090b] px-3">
+                <span class="font-mono text-[8px] font-semibold tracking-[0.1em] text-[#fbbf24]">PROPOSED / EVOARCH OUTPUT</span>
+                <span class="font-mono text-[8px] uppercase tracking-[0.08em] text-[#b45309]">AI-upgraded nodes highlighted</span>
+              </div>
+              <div id="cy-proposed" class="absolute inset-x-0 bottom-0 top-7" aria-label="Proposed optimized microservice topology graph"></div>
+            </section>
+          </div>
+
+          <div class="pointer-events-none absolute bottom-3 left-3 border border-[#1f2228] bg-[#0d0e10]/95 px-2.5 py-2">
+            <p class="font-mono text-[9px] uppercase tracking-[0.08em] text-[#626873]">PATH STATUS</p>
+            <div class="mt-1.5 flex gap-3 font-mono text-[9px] text-[#858b95]">
+              <span class="flex items-center gap-1"><i class="h-1.5 w-1.5 bg-[#10b981]"></i>optimized</span>
+              <span class="flex items-center gap-1"><i class="h-1.5 w-1.5 bg-[#f59e0b]"></i>mutation</span>
+              <span class="flex items-center gap-1"><i class="h-1.5 w-1.5 bg-[#ef4444]"></i>saturation</span>
+            </div>
+          </div>
+
+          <div id="detailCard" class="pointer-events-none absolute bottom-3 right-3 w-56 border border-[#1f2228] bg-[#0d0e10]/95 p-2.5">
+            <div class="detail-title">Node inspector</div>
+            <div class="detail-copy">Select a service to inspect resources, load, and current routing policy.</div>
+          </div>
+        </section>
+
+        <aside id="systemConsole" class="console-panel flex min-h-0 flex-col overflow-hidden bg-[#0d0e10]" aria-label="System Console">
+          <div class="flex h-10 shrink-0 items-center justify-between border-b border-[#1f2228] px-3">
+            <div class="flex items-center gap-2">
+              <span class="h-1.5 w-1.5 bg-[#f59e0b]"></span>
+              <span class="font-mono text-[10px] font-semibold tracking-[0.1em] text-[#c4c8ce]">SYSTEM CONSOLE</span>
+            </div>
+            <span id="runLabel" class="font-mono text-[9px] uppercase tracking-[0.08em] text-[#666c76]">Awaiting run</span>
+          </div>
+
+          <div class="flex shrink-0 border-b border-[#1f2228]" role="tablist" aria-label="System Console tabs">
+            <button id="auditTab" data-active="true" class="border-r border-[#1f2228] border-b border-b-[#f3f4f6] px-3 py-2 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#f3f4f6]" type="button" role="tab" aria-selected="true">STDIN/STDOUT AUDIT</button>
+            <button id="sandboxTab" data-active="false" class="border-r border-[#1f2228] px-3 py-2 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#69707a] transition-colors hover:text-[#d1d5db]" type="button" role="tab" aria-selected="false">INFRASTRUCTURE SYNTHESIS</button>
+          </div>
+
+          <div class="min-h-0 flex-1 p-3">
+            <div id="auditPanel" class="flex h-full min-h-0 flex-col" role="tabpanel" aria-labelledby="auditTab">
+              <div class="mb-3 grid grid-cols-4 border border-[#1f2228] bg-[#0b0c0e]">
+                <label class="border-r border-[#1f2228] p-2">
+                  <span class="block font-mono text-[8px] tracking-[0.08em] text-[#626873]">GEN</span>
+                  <input id="generations" type="number" min="1" max="200" value="18" class="mt-1 w-full bg-transparent font-mono text-[11px] text-[#d1d5db] outline-none" />
+                </label>
+                <label class="border-r border-[#1f2228] p-2">
+                  <span class="block font-mono text-[8px] tracking-[0.08em] text-[#626873]">POP</span>
+                  <input id="population" type="number" min="4" max="128" value="24" class="mt-1 w-full bg-transparent font-mono text-[11px] text-[#d1d5db] outline-none" />
+                </label>
+                <label class="border-r border-[#1f2228] p-2">
+                  <span class="block font-mono text-[8px] tracking-[0.08em] text-[#626873]">QPS</span>
+                  <input id="qps" type="number" min="1" max="100000" value="120" class="mt-1 w-full bg-transparent font-mono text-[11px] text-[#d1d5db] outline-none" />
+                </label>
+                <label class="p-2">
+                  <span class="block font-mono text-[8px] tracking-[0.08em] text-[#626873]">FRAME_MS</span>
+                  <input id="delay" type="number" min="0" max="5000" value="350" class="mt-1 w-full bg-transparent font-mono text-[11px] text-[#d1d5db] outline-none" />
+                </label>
+              </div>
+
+              <div class="mb-2 flex items-center justify-between border-b border-[#1f2228] pb-2">
+                <span class="font-mono text-[9px] tracking-[0.08em] text-[#666c76]">EXECUTION LOG</span>
+                <span id="autoScrollStatus" class="font-mono text-[8px] text-[#555b66]">AUTO_SCROLL: ON</span>
+              </div>
+              <div id="terminal" class="terminal-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#0b0c0e] p-2.5 font-mono text-[10px] leading-[1.55]" role="log" aria-live="polite"></div>
+            </div>
+
+            <div id="sandboxPanel" class="hidden h-full min-h-0" role="tabpanel" aria-labelledby="sandboxTab">
+              <div class="flex h-full min-h-0 flex-col">
+                <div class="border border-[#1f2228] bg-[#0b0c0e] px-3 py-2">
+                  <div class="flex items-center justify-between gap-3">
+                    <p class="font-mono text-[9px] font-semibold tracking-[0.08em] text-[#c4c8ce]">INFRASTRUCTURE SYNTHESIS / KUBERNETES</p>
+                    <span id="synthesisStatus" class="font-mono text-[8px] uppercase tracking-[0.08em] text-[#555b66]">Awaiting run</span>
+                  </div>
+                  <p class="mt-1 font-mono text-[9px] leading-4 text-[#666c76]">Validated ADR and deployment manifests appear after the selected Pareto architecture completes.</p>
+                </div>
+                <div id="synthesisWorkspace" class="terminal-scrollbar relative mt-3 flex-1 overflow-auto border border-[#1f2228] bg-[#0b0c0e] p-3">
+                  <div id="artifactEmptyState" class="flex min-h-[15rem] h-full flex-col items-start justify-center border border-dashed border-[#30343b] bg-[#0d0e10] p-5">
+                    <span id="artifactEmptyEyebrow" class="font-mono text-[8px] font-semibold uppercase tracking-[0.1em] text-[#555b66]">[ DEPLOYMENT PACKAGE ]</span>
+                    <p id="artifactEmptyTitle" class="mt-3 font-mono text-[12px] font-semibold text-[#c4c8ce]">No deployment package yet</p>
+                    <p id="artifactEmptyMessage" class="mt-2 max-w-md font-mono text-[10px] leading-5 text-[#858b95]">Upload a topology, then run a queue-stable optimization to generate a validated ADR and Kubernetes manifest.</p>
+                  </div>
+
+                  <div id="artifactContent" class="hidden">
+                    <div class="mb-3 border-b border-[#1f2228] pb-2">
+                      <span class="font-mono text-[9px] text-[#858b95]">ARCHITECTURAL DECISION RECORD</span>
+                      <pre id="adrOutput" class="mt-2 whitespace-pre-wrap font-mono text-[9px] leading-4 text-[#858b95]"></pre>
+                    </div>
+                    <div class="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[#1f2228] pb-2">
+                      <div class="min-w-0">
+                        <span id="iacPath" class="block truncate font-mono text-[9px] text-[#858b95]">infra/evoarch.optimized.yaml</span>
+                        <span id="iacActionStatus" class="mt-1 block font-mono text-[8px] uppercase tracking-[0.08em] text-[#555b66]" role="status">Awaiting artifact</span>
+                      </div>
+                      <div class="flex shrink-0 items-center gap-1.5">
+                        <button id="copyIacButton" class="border border-[#1f2228] px-2 py-1 font-mono text-[8px] font-semibold tracking-[0.06em] text-[#858b95] transition-colors hover:border-[#4b5563] hover:text-[#f3f4f6] disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled>[ COPY ]</button>
+                        <button id="downloadIacButton" class="border border-[#1f2228] px-2 py-1 font-mono text-[8px] font-semibold tracking-[0.06em] text-[#858b95] transition-colors hover:border-[#4b5563] hover:text-[#f3f4f6] disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled>[ DOWNLOAD ]</button>
+                      </div>
+                    </div>
+                    <pre class="m-0 whitespace-pre-wrap font-mono text-[10px] leading-5 text-[#a1a1aa]"><code id="iacOutput"></code></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script>
+      const terminal = document.getElementById("terminal");
+      const appShell = document.getElementById("appShell");
+      const accessGate = document.getElementById("access-gate");
+      const accessInput = document.getElementById("access-input");
+      const accessStatus = document.getElementById("access-status");
+      const autoScrollStatus = document.getElementById("autoScrollStatus");
+      const runButton = document.getElementById("runButton");
+      const runButtonLabel = document.getElementById("runButtonLabel");
+      const themeToggle = document.getElementById("themeToggle");
+      const graphFitButton = document.getElementById("graphFitButton");
+      const connectionDot = document.getElementById("connectionDot");
+      const connectionText = document.getElementById("connectionText");
+      const runLabel = document.getElementById("runLabel");
+      const generationMetric = document.getElementById("generationMetric");
+      const latencyMetric = document.getElementById("latencyMetric");
+      const servicesMetric = document.getElementById("servicesMetric");
+      const costMetric = document.getElementById("costMetric");
+      const efficiencyMetric = document.getElementById("efficiencyMetric");
+      const saturationBadge = document.getElementById("saturationBadge");
+      const workstationGrid = document.getElementById("workstationGrid");
+      const networkPanel = document.getElementById("networkPanel");
+      const consoleToggle = document.getElementById("consoleToggle");
+      const trafficSimulationToggle = document.getElementById("trafficSimulationToggle");
+      const detailCard = document.getElementById("detailCard");
+      const optimizationPrompt = document.getElementById("optimizationPrompt");
+      const chaosMode = document.getElementById("chaosMode");
+      const topologyFileInput = document.getElementById("topologyFileInput");
+      const ingestButton = document.getElementById("ingestButton");
+      const ingestButtonLabel = document.getElementById("ingestButtonLabel");
+      const ingestSpinner = document.getElementById("ingestSpinner");
+      const ingestProgress = document.getElementById("ingestProgress");
+      const ingestProgressDot = document.getElementById("ingestProgressDot");
+      const ingestProgressText = document.getElementById("ingestProgressText");
+      const auditTab = document.getElementById("auditTab");
+      const sandboxTab = document.getElementById("sandboxTab");
+      const auditPanel = document.getElementById("auditPanel");
+      const sandboxPanel = document.getElementById("sandboxPanel");
+      const synthesisStatus = document.getElementById("synthesisStatus");
+      const synthesisWorkspace = document.getElementById("synthesisWorkspace");
+      const artifactEmptyState = document.getElementById("artifactEmptyState");
+      const artifactEmptyEyebrow = document.getElementById("artifactEmptyEyebrow");
+      const artifactEmptyTitle = document.getElementById("artifactEmptyTitle");
+      const artifactEmptyMessage = document.getElementById("artifactEmptyMessage");
+      const artifactContent = document.getElementById("artifactContent");
+      const adrOutput = document.getElementById("adrOutput");
+      const iacOutput = document.getElementById("iacOutput");
+      const copyIacButton = document.getElementById("copyIacButton");
+      const downloadIacButton = document.getElementById("downloadIacButton");
+      const iacActionStatus = document.getElementById("iacActionStatus");
+      let isAuditAutoScrollEnabled = true;
+      const iacPath = document.getElementById("iacPath");
+      let rateLimitCooldownTimer = null;
+      let activeAccessCode = "";
+
+      let initialTheme = "dark";
+      try {
+        initialTheme = localStorage.getItem("evoarch-theme") === "light" ? "light" : "dark";
+      } catch {
+        initialTheme = "dark";
+      }
+      document.documentElement.dataset.theme = initialTheme;
+      themeToggle.textContent = initialTheme === "light" ? "[ ◐ DARK ]" : "[ ☼ LIGHT ]";
+      themeToggle.setAttribute(
+        "aria-label",
+        initialTheme === "light" ? "Switch to dark mode" : "Switch to light mode"
+      );
+
+      let socket;
+      let activeRunId = null;
+      let hasIngestedTopology = false;
+      let reconnectTimer = null;
+      let consoleCollapsed = false;
+      let shadowGraphActive = false;
+      let proposedGraphNeedsFit = true;
+      let trafficSimulationTimer = null;
+      let trafficSimulationTick = 0;
+      let trafficSimulationRunActive = false;
+      let latestTopologyLayout = [];
+      let baselineTopologyLayout = [];
+      const graphRenderState = {
+        baseline: { topologyKey: null },
+        proposed: { topologyKey: null }
+      };
+
+      function resizeOptimizationPrompt() {
+        const maxHeight = 224;
+        optimizationPrompt.style.height = "2rem";
+        optimizationPrompt.style.height = `${Math.min(optimizationPrompt.scrollHeight, maxHeight)}px`;
+        optimizationPrompt.style.overflowY = optimizationPrompt.scrollHeight > maxHeight ? "auto" : "hidden";
+      }
+
+      function graphStyle() {
+        const isLightTheme = document.documentElement.dataset.theme === "light";
+        const colors = isLightTheme
+          ? {
+              node: "#e2e8f0",
+              nodeBorder: "#64748b",
+              nodeLabel: "#0f172a",
+              edge: "#94a3b8",
+              edgeLabel: "#475569",
+              edgeLabelBackground: "#f8fafc",
+              selectedBorder: "#0f172a"
+            }
+          : {
+              node: "#272a30",
+              nodeBorder: "#6b7280",
+              nodeLabel: "#d1d5db",
+              edge: "#4b5563",
+              edgeLabel: "#6b7280",
+              edgeLabelBackground: "#08090b",
+              selectedBorder: "#ffffff"
+            };
+        return [
+          {
+            selector: "node",
+            style: {
+              "width": 34,
+              "height": 34,
+              "shape": "ellipse",
+              "background-color": colors.node,
+              "border-width": 1,
+              "border-color": colors.nodeBorder,
+              "label": "data(label)",
+              "color": colors.nodeLabel,
+              "font-size": 8,
+              "font-family": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              "font-weight": 500,
+              "text-wrap": "wrap",
+              "text-max-width": 92,
+              "text-valign": "bottom",
+              "text-halign": "center",
+              "text-margin-y": 7,
+              "overlay-opacity": 0,
+              "transition-property": "background-color border-color underlay-opacity",
+              "transition-duration": "180ms"
+            }
+          },
+          {
+            selector: "node.optimized",
+            style: { "background-color": "#10b981", "border-color": "#6ee7b7" }
+          },
+          {
+            selector: "node.mutating, node.saturated",
+            style: {
+              "background-color": "mapData(utilization_ratio, 0.7, 1.0, #fecaca, #3a0000)",
+              "border-color": "mapData(utilization_ratio, 0.7, 1.0, #fca5a5, #7f1d1d)"
+            }
+          },
+          {
+            selector: "node.chaos-impacted",
+            style: { "background-color": "#f97316", "border-color": "#fdba74" }
+          },
+          {
+            selector: "node.shadow-baseline",
+            style: {
+              "background-color": "mapData(utilization_ratio, 0.0, 1.0, #5b1010, #2a0000)",
+              "border-color": "#ef4444"
+            }
+          },
+          {
+            selector: "node.ai-upgraded",
+            style: {
+              "background-color": "#f59e0b",
+              "border-color": "#fbbf24",
+              "border-width": 2,
+              "underlay-color": "#f59e0b",
+              "underlay-opacity": 0.28,
+              "underlay-padding": 6
+            }
+          },
+          {
+            selector: "node.saturated.ai-upgraded",
+            style: {
+              "background-color": "mapData(utilization_ratio, 0.7, 1.0, #fecaca, #3a0000)",
+              "border-color": "mapData(utilization_ratio, 0.7, 1.0, #fca5a5, #7f1d1d)",
+              "underlay-color": "#7f1d1d",
+              "underlay-opacity": 0.22,
+              "underlay-padding": 6
+            }
+          },
+          {
+            selector: "edge",
+            style: {
+              "width": 1,
+              "line-color": "data(traffic_color)",
+              "target-arrow-color": "data(traffic_color)",
+              "target-arrow-shape": "triangle",
+              "curve-style": "bezier",
+              "arrow-scale": 0.55,
+              "label": "data(latency_text)",
+              "font-size": 7,
+              "font-family": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              "color": colors.edgeLabel,
+              "text-background-color": colors.edgeLabelBackground,
+              "text-background-opacity": 0.9,
+              "text-background-padding": 1,
+              "transition-property": "line-color target-arrow-color width",
+              "transition-duration": "180ms"
+            }
+          },
+          {
+            selector: "edge.active-path",
+            style: {
+              "width": 1.5
+            }
+          },
+          {
+            selector: "edge.shadow-baseline-edge",
+            style: { "opacity": 0.92 }
+          },
+          {
+            selector: ":selected",
+            style: { "border-width": 2, "border-color": colors.selectedBorder, "overlay-opacity": 0 }
+          }
+        ];
+      }
+
+      function createGraph(containerId) {
+        return cytoscape({
+          container: document.getElementById(containerId),
+          elements: [],
+          layout: { name: "grid" },
+          style: graphStyle(),
+          minZoom: 0.15,
+          maxZoom: 3,
+          userPanningEnabled: true,
+          userZoomingEnabled: true,
+          boxSelectionEnabled: false,
+          autounselectify: false
+        });
+      }
+
+      const cyBaseline = createGraph("cy-baseline");
+      const cyProposed = createGraph("cy-proposed");
+
+      function setDashboardTheme(theme) {
+        document.documentElement.dataset.theme = theme;
+        themeToggle.textContent = theme === "light" ? "[ ◐ DARK ]" : "[ ☼ LIGHT ]";
+        themeToggle.setAttribute(
+          "aria-label",
+          theme === "light" ? "Switch to dark mode" : "Switch to light mode"
+        );
+        try {
+          localStorage.setItem("evoarch-theme", theme);
+        } catch {}
+        [cyBaseline, cyProposed].forEach((graph) => graph.style().fromJson(graphStyle()).update());
+      }
+
+      function attachNodeInspector(graph, viewLabel) {
+        graph.on("tap", "node", (event) => {
+          const data = event.target.data();
+          const utilization = Number.isFinite(data.cpu_load_percent)
+            ? `${Number(data.cpu_load_percent).toFixed(1)}%`
+            : "∞";
+          detailCard.innerHTML = `
+            <div class="detail-title">${escapeHtml(viewLabel)} / ${escapeHtml(data.label)}</div>
+            <div class="detail-copy">
+              replicas=${data.replicas} · cpu=${Number(data.cpu_limit).toFixed(2)} · mem=${data.memory_mb}MB<br>
+              active=${data.available_replicas}/${data.replicas} · util=${utilization}<br>
+              route=${escapeHtml(data.routing_algorithm)} · arrival=${Number(data.arrival_rate_qps).toFixed(1)} qps
+            </div>`;
+        });
+      }
+
+      attachNodeInspector(cyBaseline, "Baseline");
+      attachNodeInspector(cyProposed, "Proposed");
+
+      function copyLayout(elements) {
+        return elements.map((element) => ({
+          ...element,
+          data: { ...element.data },
+          classes: element.classes || ""
+        }));
+      }
+
+      function addGraphClass(element, className) {
+        return {
+          ...element,
+          data: { ...element.data },
+          classes: [element.classes, className].filter(Boolean).join(" ")
+        };
+      }
+
+      const trafficColorStops = [
+        { latency: 10, color: [16, 185, 129] },
+        { latency: 75, color: [245, 158, 11] },
+        { latency: 250, color: [249, 115, 22] },
+        { latency: 500, color: [127, 29, 29] }
+      ];
+
+      function interpolateTrafficColor(startColor, endColor, ratio) {
+        const red = Math.round(startColor[0] + (endColor[0] - startColor[0]) * ratio);
+        const green = Math.round(startColor[1] + (endColor[1] - startColor[1]) * ratio);
+        const blue = Math.round(startColor[2] + (endColor[2] - startColor[2]) * ratio);
+        return `rgb(${red}, ${green}, ${blue})`;
+      }
+
+      function trafficColorForLatency(latencyMs, isSaturated = false) {
+        if (isSaturated || !Number.isFinite(latencyMs)) return "#7f1d1d";
+        if (latencyMs <= trafficColorStops[0].latency) return "#10b981";
+
+        for (let stopIndex = 1; stopIndex < trafficColorStops.length; stopIndex += 1) {
+          const previousStop = trafficColorStops[stopIndex - 1];
+          const currentStop = trafficColorStops[stopIndex];
+          if (latencyMs <= currentStop.latency) {
+            const ratio = (latencyMs - previousStop.latency)
+              / (currentStop.latency - previousStop.latency);
+            return interpolateTrafficColor(previousStop.color, currentStop.color, ratio);
+          }
+        }
+        return "#7f1d1d";
+      }
+
+      function formatGraphElements(elements) {
+        return elements.map((element) => {
+          if (element.group !== "edges") return { ...element, data: { ...element.data } };
+          const rawDynamicLatency = element.data?.dynamic_latency_ms;
+          const dynamicLatency = typeof rawDynamicLatency === "number"
+            ? rawDynamicLatency
+            : Number.NaN;
+          const baseLatency = Number(element.data?.base_latency_ms);
+          const initialLatency = Number.isFinite(dynamicLatency)
+            ? dynamicLatency
+            : baseLatency;
+          const isSaturated = Boolean(element.data?.edge_saturated);
+          const latencyText = isSaturated
+            ? "SAT"
+            : element.data?.show_latency_label && Number.isFinite(dynamicLatency)
+              ? `${dynamicLatency.toFixed(1)} ms`
+              : "";
+          return {
+            ...element,
+            data: {
+              ...element.data,
+              dynamic_latency_ms: Number.isFinite(dynamicLatency) ? dynamicLatency : null,
+              simulated_latency_ms: initialLatency,
+              latency_text: latencyText,
+              traffic_color: trafficColorForLatency(initialLatency, isSaturated)
+            }
+          };
+        });
+      }
+
+      function updateTrafficSimulationControl() {
+        const isRunning = trafficSimulationTimer !== null;
+        trafficSimulationToggle.disabled = !trafficSimulationRunActive;
+        trafficSimulationToggle.setAttribute("aria-pressed", String(isRunning));
+        trafficSimulationToggle.title = trafficSimulationRunActive
+          ? isRunning
+            ? "Freeze the current live telemetry"
+            : "Resume the live telemetry"
+          : "Starts automatically when an optimization run begins";
+        trafficSimulationToggle.textContent = !trafficSimulationRunActive
+          ? "[ RUN TO START ]"
+          : isRunning
+            ? "[ STOP LIVE ]"
+            : "[ RESUME LIVE ]";
+      }
+
+      function updateGraphTrafficTelemetry(graph, profile) {
+        graph.batch(() => {
+          graph.edges().forEach((edge, edgeIndex) => {
+            if (!edge.data("active")) return;
+
+            const targetNode = graph.getElementById(String(edge.data("target")));
+            const targetUtilization = targetNode.length > 0
+              ? Number(targetNode.data("utilization_ratio"))
+              : 0.0;
+            const isSaturated = Boolean(edge.data("edge_saturated"))
+              || (targetNode.length > 0 && targetNode.hasClass("saturated"));
+            if (isSaturated) {
+              edge.data({
+                latency_text: "SAT",
+                traffic_color: trafficColorForLatency(Number.NaN, true)
+              });
+              return;
+            }
+
+            const configuredLatency = Number(edge.data("dynamic_latency_ms"));
+            const baseLatency = Number.isFinite(configuredLatency)
+              ? configuredLatency
+              : Number(edge.data("base_latency_ms"));
+            const safeBaseLatency = Number.isFinite(baseLatency) ? baseLatency : 0.0;
+            const safeUtilization = Number.isFinite(targetUtilization)
+              ? Math.max(0.0, targetUtilization)
+              : 0.0;
+            const wave = (Math.sin((trafficSimulationTick + edgeIndex * 2.7) / 2.8) + 1.0) / 2.0;
+
+            const simulatedLatency = profile === "baseline"
+              ? safeBaseLatency
+                + Math.max(0.75, safeUtilization) * 90.0
+                  * (0.5 + wave * 0.5)
+                  * (trafficSimulationTick % 6 === 0 ? 1.45 : trafficSimulationTick % 6 === 1 ? 0.68 : 1.0)
+              : Math.max(
+                0.1,
+                safeBaseLatency
+                  + Math.max(0.0, safeUtilization - 0.45) * 35.0
+                  + (wave - 0.5) * 1.5,
+              );
+            const roundedLatency = Math.round(simulatedLatency * 10.0) / 10.0;
+            edge.data({
+              simulated_latency_ms: roundedLatency,
+              latency_text: `${roundedLatency.toFixed(1)} ms`,
+              traffic_color: trafficColorForLatency(roundedLatency)
+            });
+          });
+        });
+      }
+
+      function runTrafficSimulationTick() {
+        trafficSimulationTick += 1;
+        updateGraphTrafficTelemetry(cyBaseline, "baseline");
+        updateGraphTrafficTelemetry(cyProposed, "proposed");
+      }
+
+      function startTrafficSimulation() {
+        if (!trafficSimulationRunActive || trafficSimulationTimer !== null) return;
+        runTrafficSimulationTick();
+        trafficSimulationTimer = window.setInterval(runTrafficSimulationTick, 200);
+        updateTrafficSimulationControl();
+      }
+
+      function stopTrafficSimulation() {
+        if (trafficSimulationTimer !== null) {
+          window.clearInterval(trafficSimulationTimer);
+          trafficSimulationTimer = null;
+        }
+        updateTrafficSimulationControl();
+      }
+
+      function baselineGraphElements(elements) {
+        return formatGraphElements(elements).map((element) => {
+          if (element.group === "nodes") return addGraphClass(element, "shadow-baseline");
+          if (element.group === "edges") return addGraphClass(element, "shadow-baseline-edge");
+          return element;
+        });
+      }
+
+      function proposedGraphElements(elements) {
+        const baselineNodes = new Map(
+          baselineTopologyLayout
+            .filter((element) => element.group === "nodes")
+            .map((element) => [element.data?.id, element.data])
+        );
+        return formatGraphElements(elements).map((element) => {
+          if (element.group !== "nodes") return element;
+          const baselineNode = baselineNodes.get(element.data?.id);
+          const isScaledUp = !baselineNode
+            || Number(element.data?.replicas || 0) > Number(baselineNode.replicas || 0)
+            || Number(element.data?.cpu_limit || 0) > Number(baselineNode.cpu_limit || 0)
+            || Number(element.data?.memory_mb || 0) > Number(baselineNode.memory_mb || 0);
+          return isScaledUp ? addGraphClass(element, "ai-upgraded") : element;
+        });
+      }
+
+      function renderGraph(graph, state, elements, shouldFlash = false, forceFit = false) {
+        if (!Array.isArray(elements) || elements.length === 0) return;
+        const topologyKey = elements
+          .map((element) => `${element.group || "nodes"}:${element.data?.id || ""}`)
+          .sort()
+          .join("|");
+        const preserveViewport = !forceFit && state.topologyKey === topologyKey && graph.elements().length > 0;
+        const viewport = preserveViewport
+          ? { pan: { ...graph.pan() }, zoom: graph.zoom() }
+          : null;
+        const nodePositions = preserveViewport
+          ? new Map(graph.nodes().map((node) => [node.id(), { ...node.position() }]))
+          : new Map();
+
+        graph.elements().remove();
+        graph.add(elements);
+        if (preserveViewport && viewport) {
+          graph.nodes().forEach((node) => {
+            const position = nodePositions.get(node.id());
+            if (position) node.position(position);
+          });
+          graph.zoom(viewport.zoom);
+          graph.pan(viewport.pan);
+        } else {
+          graph.layout({
+            name: "breadthfirst",
+            directed: true,
+            spacingFactor: 1.18,
+            padding: 70,
+            animate: false,
+            fit: true
+          }).run();
+          state.topologyKey = topologyKey;
+        }
+        if (shouldFlash) flashMutations(graph);
+      }
+
+      function freezeBaseline(elements) {
+        if (!Array.isArray(elements) || elements.length === 0) return;
+        baselineTopologyLayout = copyLayout(elements);
+        graphRenderState.baseline.topologyKey = null;
+        renderGraph(
+          cyBaseline,
+          graphRenderState.baseline,
+          baselineGraphElements(baselineTopologyLayout)
+        );
+      }
+
+      function renderTopology(elements) {
+        if (!Array.isArray(elements) || elements.length === 0) return;
+        latestTopologyLayout = copyLayout(elements);
+        if (!shadowGraphActive) {
+          renderGraph(
+            cyBaseline,
+            graphRenderState.baseline,
+            formatGraphElements(latestTopologyLayout)
+          );
+          return;
+        }
+        if (baselineTopologyLayout.length === 0) freezeBaseline(latestTopologyLayout);
+        const proposedElements = proposedGraphElements(latestTopologyLayout);
+        const forceFit = proposedGraphNeedsFit;
+        window.requestAnimationFrame(() => {
+          renderGraph(
+            cyProposed,
+            graphRenderState.proposed,
+            proposedElements,
+            true,
+            forceFit
+          );
+          cyProposed.resize();
+          proposedGraphNeedsFit = false;
+        });
+      }
+
+      function fitGraphToCanvas(graph) {
+        graph.resize();
+        if (graph.elements().length > 0) graph.fit(graph.elements(), 64);
+      }
+
+      function fitVisibleGraphs() {
+        fitGraphToCanvas(cyBaseline);
+        if (shadowGraphActive) fitGraphToCanvas(cyProposed);
+      }
+
+      function resizeGraphs() {
+        cyBaseline.resize();
+        cyProposed.resize();
+      }
+
+      function setConsoleCollapsed(collapsed) {
+        consoleCollapsed = collapsed;
+        workstationGrid.classList.toggle("console-collapsed", collapsed);
+        consoleToggle.setAttribute("aria-expanded", String(!collapsed));
+        consoleToggle.textContent = collapsed ? "[ ◨ CONSOLE ]" : "[ ◧ HIDE CONSOLE ]";
+        window.requestAnimationFrame(fitVisibleGraphs);
+        window.setTimeout(fitVisibleGraphs, 300);
+      }
+
+      function activateShadowGraph(baselineElements = [], resetBaseline = false) {
+        shadowGraphActive = true;
+        networkPanel.classList.add("shadow-active");
+        if (resetBaseline) {
+          baselineTopologyLayout = [];
+          graphRenderState.proposed.topologyKey = null;
+          proposedGraphNeedsFit = true;
+          cyProposed.elements().remove();
+        }
+        const sourceLayout = baselineElements.length ? baselineElements : latestTopologyLayout;
+        if (baselineTopologyLayout.length === 0 && sourceLayout.length) freezeBaseline(sourceLayout);
+        setConsoleCollapsed(true);
+      }
+
+      function resetShadowGraph() {
+        shadowGraphActive = false;
+        baselineTopologyLayout = [];
+        graphRenderState.baseline.topologyKey = null;
+        graphRenderState.proposed.topologyKey = null;
+        proposedGraphNeedsFit = true;
+        cyProposed.elements().remove();
+        networkPanel.classList.remove("shadow-active");
+        setConsoleCollapsed(false);
+      }
+
+      function flashMutations(graph) {
+        graph.nodes(".mutating, .ai-upgraded").forEach((node) => {
+          node.animate({ style: { "border-color": "#ffffff", "border-width": 2 } }, { duration: 110 });
+          window.setTimeout(() => {
+            node.animate({ style: { "border-color": "#fbbf24", "border-width": 2 } }, { duration: 220 });
+          }, 130);
+        });
+      }
+
+      function updateMetrics(event) {
+        generationMetric.textContent = `GEN ${event.generation ?? "—"}`;
+        if (event.layout && event.layout.length) {
+          servicesMetric.textContent = event.layout.filter((item) => item.group === "nodes").length;
+        }
+        if (!event.metrics) return;
+
+        const p99 = event.metrics.p99_latency_ms;
+        const saturatedServices = event.metrics.saturated_services || [];
+        const score = Number(event.metrics.composite_fitness || 0);
+        latencyMetric.textContent = p99 === null ? "∞" : `${Number(p99).toFixed(1)} ms`;
+        costMetric.textContent = `$${Number(event.metrics.cost_hourly).toFixed(3)}`;
+        efficiencyMetric.textContent = score.toFixed(4);
+        saturationBadge.textContent = saturatedServices.length ? `SAT:${saturatedServices.length}` : "PARETO";
+        saturationBadge.className = saturatedServices.length
+          ? "border border-[#ef4444]/40 px-1.5 py-0.5 font-mono text-[8px] text-[#fca5a5]"
+          : "border border-[#30343b] px-1.5 py-0.5 font-mono text-[8px] text-[#777d87]";
+      }
+
+      function appendLog(log) {
+        const timestamp = new Date().toLocaleTimeString([], { hour12: false });
+        const line = document.createElement("div");
+        line.className = `terminal-line ${log.level || "info"}`;
+        line.innerHTML = `
+          <span class="terminal-time">${timestamp}</span>
+          <span><span class="terminal-level">[${(log.level || "info").toUpperCase()}]</span> ${escapeHtml(log.message)}</span>`;
+        terminal.appendChild(line);
+        if (isAuditAutoScrollEnabled) terminal.scrollTop = terminal.scrollHeight;
+      }
+
+      function updateAuditAutoScroll() {
+        const distanceFromBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight;
+        isAuditAutoScrollEnabled = distanceFromBottom <= 8;
+        autoScrollStatus.textContent = `AUTO_SCROLL: ${isAuditAutoScrollEnabled ? "ON" : "PAUSED"}`;
+      }
+
+      function setIngestionState(state, message) {
+        const isParsing = state === "parsing";
+        const isSuccessful = state === "success";
+        const isFailure = state === "failure";
+        const isRequired = state === "required";
+        const shouldShowProgress = isParsing || isFailure || isRequired;
+
+        ingestSpinner.classList.toggle("hidden", !isParsing);
+        ingestButtonLabel.textContent = isParsing
+          ? "[ EXTRACTING ]"
+          : hasIngestedTopology
+            ? "[ TOPOLOGY READY ]"
+            : "[ INGEST YAML ]";
+        ingestProgressText.textContent = message;
+        ingestProgressDot.className = isParsing
+          ? "status-dot running"
+          : isSuccessful
+            ? "status-dot online"
+            : isFailure
+              ? "status-dot failed"
+              : "status-dot";
+        const tone = isFailure
+          ? "text-[#ef4444]"
+          : isSuccessful
+            ? "text-[#10b981]"
+            : "text-[#f59e0b]";
+        ingestProgress.className = `${shouldShowProgress ? "flex" : "hidden"} shrink-0 items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.06em] ${tone}`;
+      }
+
+      function setTopologyAvailability(isAvailable) {
+        hasIngestedTopology = isAvailable;
+        ingestButton.classList.toggle("topology-ready", isAvailable);
+        ingestButton.classList.toggle("needs-topology", !isAvailable);
+        if (!ingestButton.disabled) {
+          ingestButtonLabel.textContent = isAvailable ? "[ TOPOLOGY READY ]" : "[ INGEST YAML ]";
+        }
+      }
+
+      function flashAccessDenied() {
+        accessInput.value = "";
+        accessInput.classList.add("access-denied");
+        accessStatus.textContent = "Invalid Access DNA";
+        accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#ef4444]";
+        window.setTimeout(() => {
+          accessInput.classList.remove("access-denied");
+          accessInput.focus();
+        }, 500);
+      }
+
+      function unlockDashboard(accessCode) {
+        activeAccessCode = accessCode;
+        accessStatus.textContent = "Access verified";
+        accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#10b981]";
+        appShell.classList.remove("access-gated");
+        accessGate.classList.add("is-unlocking");
+        window.setTimeout(() => {
+          accessGate.hidden = true;
+        }, 240);
+      }
+
+      async function verifyAccessCode() {
+        const accessCode = accessInput.value.trim();
+        if (!accessCode) {
+          flashAccessDenied();
+          return;
+        }
+
+        accessInput.disabled = true;
+        accessStatus.textContent = "Verifying Access DNA";
+        accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#f59e0b]";
+        try {
+          const response = await fetch("/api/verify-access", {
+            method: "POST",
+            headers: { "X-Access-Code": accessCode },
+          });
+          if (response.ok) {
+            unlockDashboard(accessCode);
+            return;
+          }
+          if (response.status === 401) {
+            flashAccessDenied();
+            return;
+          }
+          throw new Error("Access verification is temporarily unavailable.");
+        } catch (error) {
+          accessStatus.textContent = error.message;
+          accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#ef4444]";
+        } finally {
+          accessInput.disabled = false;
+        }
+      }
+
+      function clearRunButtonFeedback() {
+        runButton.classList.remove("optimization-request-active", "rate-limit-cooldown");
+        if (rateLimitCooldownTimer !== null) {
+          window.clearTimeout(rateLimitCooldownTimer);
+          rateLimitCooldownTimer = null;
+        }
+      }
+
+      function lockRunButtonForRequest() {
+        clearRunButtonFeedback();
+        runButton.disabled = true;
+        runButton.classList.add("optimization-request-active");
+        runButtonLabel.textContent = "[ SYNTHESIZING ARCHITECTURE... ]";
+      }
+
+      function releaseRunButton(label = "Trigger Autonomous Optimization") {
+        clearRunButtonFeedback();
+        runButton.disabled = false;
+        runButtonLabel.textContent = label;
+      }
+
+      function startRateLimitCooldown() {
+        clearRunButtonFeedback();
+        runButton.disabled = true;
+        chaosMode.disabled = true;
+        runButton.classList.add("rate-limit-cooldown");
+        runButtonLabel.textContent = "[ RATE LIMIT ACTIVE - COOLING DOWN ]";
+        rateLimitCooldownTimer = window.setTimeout(() => {
+          rateLimitCooldownTimer = null;
+          runButton.classList.remove("rate-limit-cooldown");
+          runButton.disabled = false;
+          chaosMode.disabled = false;
+          runButtonLabel.textContent = "Trigger Autonomous Optimization";
+        }, 5000);
+      }
+
+      function showArtifactEmptyState(title, message, tone = "muted") {
+        artifactContent.classList.add("hidden");
+        artifactEmptyState.classList.remove("hidden");
+        artifactEmptyTitle.textContent = title;
+        artifactEmptyMessage.textContent = message;
+        artifactEmptyEyebrow.textContent = tone === "error"
+          ? "[ DEPLOYMENT BLOCKED ]"
+          : tone === "generating"
+            ? "[ GENERATING PACKAGE ]"
+            : "[ DEPLOYMENT PACKAGE ]";
+        artifactEmptyEyebrow.className = tone === "error"
+          ? "font-mono text-[8px] font-semibold uppercase tracking-[0.1em] text-[#ef4444]"
+          : tone === "generating"
+            ? "font-mono text-[8px] font-semibold uppercase tracking-[0.1em] text-[#f59e0b]"
+            : "font-mono text-[8px] font-semibold uppercase tracking-[0.1em] text-[#555b66]";
+      }
+
+      function showArtifactContent() {
+        artifactEmptyState.classList.add("hidden");
+        artifactContent.classList.remove("hidden");
+        synthesisWorkspace.scrollTop = 0;
+      }
+
+      function renderDeploymentPackage(event) {
+        if (typeof event.adr_markdown !== "string" || typeof event.iac_code !== "string") return;
+
+        synthesisWorkspace.classList.remove("ai-cooking");
+        showArtifactContent();
+        const targetFormat = String(event.target_format || "kubernetes").toLowerCase();
+        adrOutput.textContent = event.adr_markdown;
+        iacOutput.textContent = event.iac_code;
+        iacPath.textContent = targetFormat === "terraform"
+          ? "infra/evoarch.optimized.tf"
+          : "infra/evoarch.optimized.yaml";
+        synthesisStatus.textContent = `${targetFormat} / ready`;
+        synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#10b981]";
+        setIacActionsEnabled(true, "Artifact ready", "ready");
+        activateTab("sandbox");
+      }
+
+      function clearDeploymentPackage(message) {
+        synthesisWorkspace.classList.remove("ai-cooking");
+        showArtifactEmptyState("No deployment package yet", message);
+        adrOutput.textContent = "";
+        iacPath.textContent = "infra/evoarch.optimized.yaml";
+        iacOutput.textContent = "";
+        synthesisStatus.textContent = "Awaiting stable plan";
+        synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#555b66]";
+        setIacActionsEnabled(false, "Artifact unavailable");
+      }
+
+      function showInfeasibleDeploymentState(event) {
+        const saturatedServices = event.metrics?.saturated_services || [];
+        const bottlenecks = event.infeasibility?.bottlenecks || [];
+        const primaryBottleneck = bottlenecks[0];
+        synthesisWorkspace.classList.remove("ai-cooking");
+        showArtifactEmptyState(
+          "No deployable architecture found",
+          primaryBottleneck
+            ? `${saturatedServices.length} service queues remain saturated. ${primaryBottleneck.service_name} receives ${primaryBottleneck.arrival_rate_qps} QPS but can serve ${primaryBottleneck.capacity_qps} QPS. Lower the load target or increase the replica cap, then retry.`
+            : "The selected topology is not queue-stable within the active resource bounds. Review the audit, adjust constraints, and retry.",
+          "error",
+        );
+        adrOutput.textContent = "";
+        iacPath.textContent = "infra/evoarch.optimized.yaml";
+        iacOutput.textContent = "";
+        synthesisStatus.textContent = "Blocked / infeasible";
+        synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#ef4444]";
+        setIacActionsEnabled(false, "No feasible plan", "error");
+      }
+
+      function setIacActionsEnabled(enabled, message, tone = "muted") {
+        copyIacButton.disabled = !enabled;
+        downloadIacButton.disabled = !enabled;
+        iacActionStatus.textContent = message;
+        iacActionStatus.className = tone === "ready"
+          ? "font-mono text-[8px] uppercase tracking-[0.08em] text-[#10b981]"
+          : tone === "error"
+            ? "font-mono text-[8px] uppercase tracking-[0.08em] text-[#ef4444]"
+            : "font-mono text-[8px] uppercase tracking-[0.08em] text-[#555b66]";
+      }
+
+      async function copyIacArtifact() {
+        const artifact = iacOutput.textContent;
+        if (!artifact) return;
+
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+          await navigator.clipboard.writeText(artifact);
+          setIacActionsEnabled(true, "Copied", "ready");
+        } catch (error) {
+          const clipboardInput = document.createElement("textarea");
+          clipboardInput.value = artifact;
+          clipboardInput.setAttribute("readonly", "");
+          clipboardInput.className = "fixed -left-full top-0";
+          document.body.appendChild(clipboardInput);
+          clipboardInput.select();
+          const copied = document.execCommand("copy");
+          clipboardInput.remove();
+          if (copied) {
+            setIacActionsEnabled(true, "Copied", "ready");
+          } else {
+            setIacActionsEnabled(true, "Copy failed", "error");
+          }
+        }
+      }
+
+      function downloadIacArtifact() {
+        const artifact = iacOutput.textContent;
+        if (!artifact) return;
+
+        const filename = iacPath.textContent.trim() || "evoarch.optimized.yaml";
+        const isTerraform = filename.endsWith(".tf");
+        const blob = new Blob(
+          [artifact],
+          { type: isTerraform ? "text/plain;charset=utf-8" : "application/yaml;charset=utf-8" }
+        );
+        const downloadUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = downloadUrl;
+        anchor.download = filename.split("/").pop() || "evoarch.optimized.yaml";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(downloadUrl);
+        setIacActionsEnabled(true, "Download started", "ready");
+      }
+
+      copyIacButton.addEventListener("click", copyIacArtifact);
+      downloadIacButton.addEventListener("click", downloadIacArtifact);
+
+      function handleEvent(event) {
+        if (event.event === "topology_ingested") {
+          trafficSimulationRunActive = false;
+          stopTrafficSimulation();
+          resetShadowGraph();
+          setTopologyAvailability(true);
+          clearDeploymentPackage("Upload a topology, then run a queue-stable optimization to generate artifacts.");
+        }
+        if (event.event === "run_started") activateShadowGraph(event.layout || latestTopologyLayout);
+        if (event.layout && event.layout.length) renderTopology(event.layout);
+        updateMetrics(event);
+        (event.logs || []).forEach(appendLog);
+        renderDeploymentPackage(event);
+
+        if (event.event === "intent_translated") {
+          activeRunId = event.run_id;
+          runButton.disabled = true;
+          chaosMode.disabled = true;
+          runButtonLabel.textContent = "Translating Intent";
+          runLabel.textContent = "AI CONSTRAINTS READY";
+          connectionDot.className = "status-dot running";
+          connectionText.textContent = "AI translated optimization intent";
+        } else if (event.event === "topology_ingested") {
+          runLabel.textContent = "1 QPS PROBE";
+          connectionDot.className = "status-dot online";
+          connectionText.textContent = "Baseline topology verified at normal load";
+        } else if (event.event === "run_started") {
+          activeRunId = event.run_id;
+          clearDeploymentPackage("Optimization in progress. Artifacts are created only for a queue-stable architecture.");
+          runButton.disabled = true;
+          chaosMode.disabled = true;
+          runButtonLabel.textContent = "Executing";
+          runLabel.textContent = event.chaos_mode
+            ? `CHAOS ${event.run_id.slice(0, 8).toUpperCase()}`
+            : `RUN ${event.run_id.slice(0, 8).toUpperCase()}`;
+          connectionDot.className = "status-dot running";
+          connectionText.textContent = event.chaos_mode
+            ? "Fault injection active"
+            : "Autonomous loop running";
+          trafficSimulationRunActive = true;
+          startTrafficSimulation();
+        } else if (event.event === "generation_complete") {
+          runLabel.textContent = event.chaos_mode
+            ? `CHAOS GEN ${event.generation}`
+            : `GEN ${event.generation} / LIVE`;
+          connectionDot.className = "status-dot running";
+          connectionText.textContent = event.chaos_mode
+            ? "Testing self-healing candidates"
+            : "Streaming Pareto candidates";
+        } else if (event.event === "run_infeasible") {
+          trafficSimulationRunActive = false;
+          stopTrafficSimulation();
+          synthesisWorkspace.classList.remove("ai-cooking");
+          showInfeasibleDeploymentState(event);
+          setConsoleCollapsed(false);
+          activeRunId = null;
+          clearRunButtonFeedback();
+          runButton.disabled = false;
+          chaosMode.disabled = false;
+          runButtonLabel.textContent = "Adjust Constraints and Retry";
+          runLabel.textContent = "NO FEASIBLE PLAN";
+          connectionDot.className = "status-dot failed";
+          connectionText.textContent = "Capacity ceiling reached; inspect queue saturation";
+          activateTab("audit");
+        } else if (event.event === "artifact_synthesis_started") {
+          showArtifactEmptyState(
+            "Generating deployment package",
+            "EvoArch is validating the selected architecture and preparing its ADR and infrastructure manifest.",
+            "generating",
+          );
+          synthesisWorkspace.classList.add("ai-cooking");
+          setIacActionsEnabled(false, "Generating artifact");
+          runButtonLabel.textContent = "Generating IaC";
+          runLabel.textContent = "GENERATING ARTIFACTS";
+          connectionDot.className = "status-dot running";
+          connectionText.textContent = "Synthesizing deployment package";
+          synthesisStatus.textContent = "Generating artifacts";
+          synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#f59e0b]";
+          activateTab("sandbox");
+        } else if (event.event === "run_complete") {
+          trafficSimulationRunActive = false;
+          stopTrafficSimulation();
+          activeRunId = null;
+          clearRunButtonFeedback();
+          runButton.disabled = false;
+          chaosMode.disabled = false;
+          runButtonLabel.textContent = "Trigger Autonomous Optimization";
+          runLabel.textContent = "RUN COMPLETE";
+          connectionDot.className = "status-dot online";
+          connectionText.textContent = "Optimizer stream online";
+        } else if (event.event === "run_failed") {
+          trafficSimulationRunActive = false;
+          stopTrafficSimulation();
+          clearDeploymentPackage("The optimization did not complete, so no artifact was generated.");
+          synthesisStatus.textContent = "Run failed";
+          synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#ef4444]";
+          setIacActionsEnabled(false, "Artifact unavailable", "error");
+          setConsoleCollapsed(false);
+          activeRunId = null;
+          clearRunButtonFeedback();
+          runButton.disabled = false;
+          chaosMode.disabled = false;
+          runButtonLabel.textContent = "Retry Optimization";
+          runLabel.textContent = "RUN FAILED";
+          connectionDot.className = "status-dot failed";
+          connectionText.textContent = "Optimization needs attention";
+        }
+      }
+
+      function connectSocket() {
+        if (reconnectTimer) window.clearTimeout(reconnectTimer);
+        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+        socket = new WebSocket(`${protocol}://${window.location.host}/ws/stream`);
+
+        socket.addEventListener("open", () => {
+          connectionText.textContent = activeRunId ? "Streaming optimization events" : "Optimizer stream online";
+          if (!activeRunId) connectionDot.className = "status-dot online";
+        });
+
+        socket.addEventListener("message", (message) => {
+          try {
+            handleEvent(JSON.parse(message.data));
+          } catch (error) {
+            appendLog({ level: "error", message: `Invalid dashboard event: ${error.message}` });
+          }
+        });
+
+        socket.addEventListener("close", () => {
+          connectionDot.className = "status-dot";
+          connectionText.textContent = "Reconnecting to optimizer stream";
+          reconnectTimer = window.setTimeout(connectSocket, 1500);
+        });
+
+        socket.addEventListener("error", () => socket.close());
+      }
+
+      function activateTab(tabName) {
+        const isAudit = tabName === "audit";
+        auditTab.dataset.active = String(isAudit);
+        sandboxTab.dataset.active = String(!isAudit);
+        auditTab.setAttribute("aria-selected", String(isAudit));
+        sandboxTab.setAttribute("aria-selected", String(!isAudit));
+        auditPanel.classList.toggle("hidden", !isAudit);
+        sandboxPanel.classList.toggle("hidden", isAudit);
+        auditTab.className = isAudit
+          ? "border-r border-[#1f2228] border-b border-b-[#f3f4f6] px-3 py-2 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#f3f4f6]"
+          : "border-r border-[#1f2228] px-3 py-2 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#69707a] transition-colors hover:text-[#d1d5db]";
+        sandboxTab.className = !isAudit
+          ? "border-r border-[#1f2228] border-b border-b-[#f3f4f6] px-3 py-2 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#f3f4f6]"
+          : "border-r border-[#1f2228] px-3 py-2 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#69707a] transition-colors hover:text-[#d1d5db]";
+      }
+
+      auditTab.addEventListener("click", () => activateTab("audit"));
+      sandboxTab.addEventListener("click", () => activateTab("sandbox"));
+      consoleToggle.addEventListener("click", () => setConsoleCollapsed(!consoleCollapsed));
+      graphFitButton.addEventListener("click", fitVisibleGraphs);
+      trafficSimulationToggle.addEventListener("click", () => {
+        if (!trafficSimulationRunActive) return;
+        if (trafficSimulationTimer === null) {
+          startTrafficSimulation();
+        } else {
+          stopTrafficSimulation();
+        }
+      });
+      themeToggle.addEventListener("click", () => {
+        const nextTheme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+        setDashboardTheme(nextTheme);
+      });
+      terminal.addEventListener("scroll", updateAuditAutoScroll, { passive: true });
+      optimizationPrompt.addEventListener("input", resizeOptimizationPrompt);
+      accessInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        void verifyAccessCode();
+      });
+      resizeOptimizationPrompt();
+      setTopologyAvailability(false);
+      window.requestAnimationFrame(() => accessInput.focus());
+
+      ingestButton.addEventListener("click", () => {
+        if (activeRunId || runButton.disabled) {
+          appendLog({ level: "warning", message: "Wait for the active optimization run before replacing its topology." });
+          return;
+        }
+        topologyFileInput.click();
+      });
+
+      topologyFileInput.addEventListener("change", async () => {
+        const [file] = topologyFileInput.files;
+        if (!file) return;
+
+        ingestButton.disabled = true;
+        runButton.disabled = true;
+        setIngestionState("parsing", `Extracting ${file.name}`);
+        try {
+          const fileContent = await file.text();
+          if (!fileContent.trim()) throw new Error("The selected YAML file is empty.");
+
+          const formData = new FormData();
+          formData.append(
+            "file",
+            new Blob([fileContent], { type: file.type || "application/x-yaml" }),
+            file.name,
+          );
+          const response = await fetch("/api/upload-topology", {
+            method: "POST",
+            body: formData,
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload.detail || "Topology ingestion failed.");
+
+          appendLog({
+            level: "info",
+            message: `Parsed ${payload.source_file}: ${payload.service_count} services, ${payload.edge_count} dependencies.`,
+          });
+          setTopologyAvailability(true);
+          setIngestionState("success", `Topology ready: ${payload.service_count} services`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          appendLog({ level: "error", message: `YAML ingestion failed: ${message}` });
+          setTopologyAvailability(false);
+          setIngestionState("failure", "Topology ingestion failed");
+        } finally {
+          topologyFileInput.value = "";
+          ingestButton.disabled = false;
+          runButton.disabled = activeRunId !== null;
+          ingestButtonLabel.textContent = hasIngestedTopology ? "[ TOPOLOGY READY ]" : "[ INGEST YAML ]";
+        }
+      });
+
+      window.setInterval(() => {
+        if (socket && socket.readyState === WebSocket.OPEN) socket.send("ping");
+      }, 20000);
+
+      runButton.addEventListener("click", async () => {
+        if (!hasIngestedTopology) {
+          appendLog({
+            level: "warning",
+            message: "Upload a Docker Compose or Kubernetes YAML topology before starting optimization.",
+          });
+          setIngestionState("required", "Upload YAML before optimization");
+          ingestButton.focus();
+          return;
+        }
+
+        const prompt = optimizationPrompt.value.trim();
+        if (!prompt) {
+          appendLog({ level: "error", message: "A human optimization intent is required." });
+          optimizationPrompt.focus();
+          return;
+        }
+
+        const request = {
+          user_prompt: prompt,
+          generation_count: Number(document.getElementById("generations").value),
+          population_size: Number(document.getElementById("population").value),
+          baseline_qps: Number(document.getElementById("qps").value),
+          generation_delay_ms: Number(document.getElementById("delay").value),
+          chaos_mode: chaosMode.checked
+        };
+
+        activateShadowGraph(latestTopologyLayout, true);
+        lockRunButtonForRequest();
+        chaosMode.disabled = true;
+        setIacActionsEnabled(false, "Awaiting artifact");
+        synthesisStatus.textContent = "Awaiting artifacts";
+        synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#f59e0b]";
+        try {
+          const response = await fetch("/api/run-optimization", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Access-Code": activeAccessCode,
+            },
+            body: JSON.stringify(request)
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (response.status === 429) {
+            const error = new Error(payload.detail || "Optimization requests are temporarily rate-limited.");
+            error.isRateLimited = true;
+            throw error;
+          }
+          if (!response.ok) throw new Error(payload.detail || "Unable to start optimization");
+          activeRunId = payload.run_id;
+          appendLog({
+            level: "info",
+            message: `Requested run ${payload.run_id.slice(0, 8)}${request.chaos_mode ? " with Chaos Mode" : ""} with intent: “${prompt}”`
+          });
+        } catch (error) {
+          resetShadowGraph();
+          if (error.isRateLimited) {
+            synthesisStatus.textContent = "Rate limit active";
+            synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#f59e0b]";
+            startRateLimitCooldown();
+          } else {
+            releaseRunButton();
+            chaosMode.disabled = false;
+            synthesisStatus.textContent = "Translation failed";
+            synthesisStatus.className = "font-mono text-[8px] uppercase tracking-[0.08em] text-[#ef4444]";
+          }
+          appendLog({ level: "error", message: error.message });
+        }
+      });
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      appendLog({ level: "info", message: "EvoArch Core initialized. Awaiting a stream event or autonomous execution request." });
+      connectSocket();
+    </script>
+  </body>
+</html>
