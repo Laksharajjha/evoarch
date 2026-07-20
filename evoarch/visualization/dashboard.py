@@ -344,6 +344,11 @@ def create_app() -> FastAPI:
     application.state.limiter = limiter
     application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+    @application.head("/")
+    async def uptime_ping() -> dict[str, str]:
+        """Respond to lightweight deployment and uptime health probes."""
+        return {"status": "alive"}
+
     @application.get("/", response_class=FileResponse)
     async def dashboard_page(request: Request) -> FileResponse:
         """Serve the standalone split-screen visualization interface."""
