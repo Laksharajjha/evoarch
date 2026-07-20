@@ -5,13 +5,14 @@ import logging
 import os
 from collections import deque
 from concurrent.futures import Future
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from math import inf, isfinite
 from pathlib import Path
 from threading import RLock, Thread
 from time import sleep
 from typing import Any, Literal, Sequence
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import yaml
 from fastapi import (
@@ -47,6 +48,8 @@ INGESTION_PROBE_QPS = 1.0
 EDGE_LABEL_QUEUE_DELAY_THRESHOLD_MS = 1.0
 SUPPORTED_TOPOLOGY_SUFFIXES = frozenset({".yaml", ".yml"})
 ACCESS_CODE = os.getenv("ACCESS_CODE", "EVO-JUDGE-26")
+SESSION_COOKIE_NAME = "evoarch_session"
+SESSION_HISTORY_LIMIT = 250
 limiter = Limiter(key_func=get_remote_address)
 
 
@@ -93,34 +96,76 @@ def _require_access_code(x_access_code: str | None) -> None:
         )
 
 
+def _normalize_session_id(candidate: str | None) -> str:
+    """Return a canonical UUID session identifier or mint a new one."""
+    if candidate is not None:
+        try:
+            return str(UUID(candidate))
+        except (TypeError, ValueError, AttributeError):
+            pass
+    return str(uuid4())
+
+
+def _http_session_id(request: Request) -> str:
+    """Resolve a session from an opt-in header or the browser session cookie."""
+    return _normalize_session_id(
+        request.headers.get("X-EvoArch-Session")
+        or request.cookies.get(SESSION_COOKIE_NAME)
+    )
+
+
+def _websocket_session_id(websocket: WebSocket) -> str:
+    """Resolve a WebSocket workspace without requiring client-side auth changes."""
+    return _normalize_session_id(
+        websocket.query_params.get("session_id")
+        or websocket.cookies.get(SESSION_COOKIE_NAME)
+    )
+
+
+@dataclass
+class DashboardSession:
+    """Mutable dashboard workspace owned by one browser session."""
+
+    session_id: str
+    instance_id: str
+    baseline_genome: ArchitectureGenome
+    active_run_id: str | None = None
+    active_thread: Thread | None = None
+    event_loop: asyncio.AbstractEventLoop | None = None
+    connections: set[WebSocket] = field(default_factory=set)
+    history: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=SESSION_HISTORY_LIMIT)
+    )
+
+
 class DashboardState:
-    """Coordinate a worker thread and WebSocket broadcasts safely."""
+    """Coordinate isolated dashboard workspaces and their event streams."""
 
     def __init__(self, baseline_genome: ArchitectureGenome) -> None:
         self._lock = RLock()
-        self._active_run_id: str | None = None
-        self._active_thread: Thread | None = None
-        self._event_loop: asyncio.AbstractEventLoop | None = None
-        self._connections: set[WebSocket] = set()
-        self._history: deque[dict[str, Any]] = deque(maxlen=250)
-        self._baseline_genome = baseline_genome.model_copy(deep=True)
+        self._baseline_template = baseline_genome.model_copy(deep=True)
+        self._sessions: dict[str, DashboardSession] = {}
 
     def start_optimization(
         self,
+        session_id: str,
         request: OptimizationRunRequest,
         intent_weights: IntentWeights,
     ) -> str:
-        """Start one optimization worker, rejecting overlapping runs."""
+        """Start one optimization worker inside a session-owned workspace."""
         with self._lock:
-            if self._active_run_id is not None:
+            session = self._get_or_create_session_locked(session_id)
+            if session.active_run_id is not None:
                 raise RuntimeError("an optimization run is already active")
             run_id = uuid4().hex
-            self._active_run_id = run_id
-            baseline_genome = self._baseline_genome.model_copy(deep=True)
+            session.active_run_id = run_id
+            baseline_genome = session.baseline_genome.model_copy(deep=True)
             worker = Thread(
                 target=_run_optimization,
                 args=(
                     self,
+                    session.session_id,
+                    session.instance_id,
                     run_id,
                     request.model_copy(deep=True),
                     intent_weights.model_copy(deep=True),
@@ -129,76 +174,121 @@ class DashboardState:
                 name=f"evoarch-optimization-{run_id[:8]}",
                 daemon=True,
             )
-            self._active_thread = worker
+            session.active_thread = worker
+            session_instance_id = session.instance_id
 
         self.publish(
+            session_id,
             _intent_translated_event(
                 run_id,
                 intent_weights,
                 chaos_mode=request.chaos_mode,
-            )
+            ),
+            session_instance_id=session_instance_id,
         )
         worker.start()
         return run_id
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, session_id: str, websocket: WebSocket) -> None:
         """Accept a client and replay the recent run history."""
         await websocket.accept()
         with self._lock:
-            self._event_loop = asyncio.get_running_loop()
-            self._connections.add(websocket)
-            history = list(self._history)
+            session = self._get_or_create_session_locked(session_id)
+            session.event_loop = asyncio.get_running_loop()
+            session.connections.add(websocket)
+            history = list(session.history)
 
         for event in history:
             await websocket.send_json(event)
 
-    def disconnect(self, websocket: WebSocket) -> None:
-        """Remove a WebSocket that has closed or failed to receive events."""
+    def disconnect(self, session_id: str, websocket: WebSocket) -> None:
+        """Drop a closed connection and release an empty session workspace."""
         with self._lock:
-            self._connections.discard(websocket)
+            session = self._sessions.get(session_id)
+            if session is None:
+                return
+            session.connections.discard(websocket)
+            if not session.connections:
+                self._sessions.pop(session_id, None)
 
-    def publish(self, event: dict[str, Any]) -> None:
-        """Store an event and schedule a broadcast from any worker thread."""
+    def publish(
+        self,
+        session_id: str,
+        event: dict[str, Any],
+        *,
+        session_instance_id: str | None = None,
+    ) -> None:
+        """Store and broadcast an event only inside its owning session."""
         with self._lock:
-            self._history.append(event)
-            event_loop = self._event_loop
+            session = self._sessions.get(session_id)
+            if session is None:
+                return
+            if session_instance_id is not None and session.instance_id != session_instance_id:
+                return
+            session.history.append(event)
+            event_loop = session.event_loop
+            current_instance_id = session.instance_id
 
         if event_loop is None or not event_loop.is_running():
             return
 
         try:
             future = asyncio.run_coroutine_threadsafe(
-                self._broadcast(event),
+                self._broadcast(session_id, current_instance_id, event),
                 event_loop,
             )
             future.add_done_callback(self._consume_broadcast_result)
         except RuntimeError:
             LOGGER.debug("Dashboard event loop closed before a broadcast could run")
 
-    def finish_optimization(self, run_id: str) -> None:
-        """Mark a worker complete without disturbing a newer run."""
+    def finish_optimization(
+        self,
+        session_id: str,
+        session_instance_id: str,
+        run_id: str,
+    ) -> None:
+        """Mark a session worker complete without reviving stale state."""
         with self._lock:
-            if self._active_run_id == run_id:
-                self._active_run_id = None
-                self._active_thread = None
+            session = self._sessions.get(session_id)
+            if session is None or session.instance_id != session_instance_id:
+                return
+            if session.active_run_id == run_id:
+                session.active_run_id = None
+                session.active_thread = None
+            if not session.connections:
+                self._sessions.pop(session_id, None)
 
-    def active_run_id(self) -> str | None:
-        """Return the active optimization identifier, if any."""
+    def active_run_id(self, session_id: str) -> str | None:
+        """Return the active run identifier for one session workspace."""
         with self._lock:
-            return self._active_run_id
+            session = self._sessions.get(session_id)
+            return session.active_run_id if session is not None else None
 
-    def replace_baseline(self, genome: ArchitectureGenome) -> ArchitectureGenome:
-        """Atomically replace the baseline when no optimization worker is active."""
+    def replace_baseline(
+        self,
+        session_id: str,
+        genome: ArchitectureGenome,
+    ) -> tuple[ArchitectureGenome, str]:
+        """Replace only one session's baseline when no run is active."""
         with self._lock:
-            if self._active_run_id is not None:
+            session = self._get_or_create_session_locked(session_id)
+            if session.active_run_id is not None:
                 raise RuntimeError("cannot replace topology while an optimization run is active")
-            self._baseline_genome = genome.model_copy(deep=True)
-            return self._baseline_genome.model_copy(deep=True)
+            session.baseline_genome = genome.model_copy(deep=True)
+            return session.baseline_genome.model_copy(deep=True), session.instance_id
 
-    async def _broadcast(self, event: dict[str, Any]) -> None:
-        """Broadcast one event and discard disconnected WebSocket clients."""
+    async def _broadcast(
+        self,
+        session_id: str,
+        session_instance_id: str,
+        event: dict[str, Any],
+    ) -> None:
+        """Broadcast one event to connections in the matching workspace only."""
         with self._lock:
-            connections = tuple(self._connections)
+            session = self._sessions.get(session_id)
+            if session is None or session.instance_id != session_instance_id:
+                return
+            connections = tuple(session.connections)
         if not connections:
             return
 
@@ -213,8 +303,25 @@ class DashboardState:
         ]
         if stale_connections:
             with self._lock:
+                session = self._sessions.get(session_id)
+                if session is None or session.instance_id != session_instance_id:
+                    return
                 for connection in stale_connections:
-                    self._connections.discard(connection)
+                    session.connections.discard(connection)
+                if not session.connections:
+                    self._sessions.pop(session_id, None)
+
+    def _get_or_create_session_locked(self, session_id: str) -> DashboardSession:
+        """Return a workspace while the state manager lock is held."""
+        session = self._sessions.get(session_id)
+        if session is None:
+            session = DashboardSession(
+                session_id=session_id,
+                instance_id=uuid4().hex,
+                baseline_genome=self._baseline_template.model_copy(deep=True),
+            )
+            self._sessions[session_id] = session
+        return session
 
     @staticmethod
     def _consume_broadcast_result(future: Future[Any]) -> None:
@@ -238,14 +345,25 @@ def create_app() -> FastAPI:
     application.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     @application.get("/", response_class=FileResponse)
-    async def dashboard_page() -> FileResponse:
+    async def dashboard_page(request: Request) -> FileResponse:
         """Serve the standalone split-screen visualization interface."""
-        return FileResponse(TEMPLATE_PATH, media_type="text/html")
+        existing_session_id = request.cookies.get(SESSION_COOKIE_NAME)
+        session_id = _normalize_session_id(existing_session_id)
+        response = FileResponse(TEMPLATE_PATH, media_type="text/html")
+        if session_id != existing_session_id:
+            response.set_cookie(
+                key=SESSION_COOKIE_NAME,
+                value=session_id,
+                httponly=True,
+                samesite="lax",
+                secure=request.url.scheme == "https",
+            )
+        return response
 
     @application.get("/api/status")
-    async def optimization_status() -> dict[str, str | None]:
-        """Expose whether a background optimization worker is running."""
-        return {"active_run_id": dashboard_state.active_run_id()}
+    async def optimization_status(request: Request) -> dict[str, str | None]:
+        """Expose the requesting browser session's active optimization worker."""
+        return {"active_run_id": dashboard_state.active_run_id(_http_session_id(request))}
 
     @application.post("/api/verify-access")
     async def verify_access(
@@ -269,6 +387,7 @@ def create_app() -> FastAPI:
     ) -> OptimizationRunResponse:
         """Translate intent, then schedule its constrained optimization worker."""
         _require_access_code(x_access_code)
+        session_id = _http_session_id(request)
         try:
             intent_weights = await _translate_intent_to_weights(
                 optimization_request.user_prompt,
@@ -282,6 +401,7 @@ def create_app() -> FastAPI:
 
         try:
             run_id = dashboard_state.start_optimization(
+                session_id,
                 optimization_request,
                 intent_weights,
             )
@@ -293,8 +413,12 @@ def create_app() -> FastAPI:
         return OptimizationRunResponse(run_id=run_id, status="started")
 
     @application.post("/api/upload-topology", response_model=TopologyUploadResponse)
-    async def upload_topology(file: UploadFile = File(...)) -> TopologyUploadResponse:
+    async def upload_topology(
+        request: Request,
+        file: UploadFile = File(...),
+    ) -> TopologyUploadResponse:
         """Parse an uploaded Compose or Kubernetes YAML file into the baseline DNA."""
+        session_id = _http_session_id(request)
         filename = file.filename or "topology.yaml"
         suffix = Path(filename).suffix.lower()
         if suffix not in SUPPORTED_TOPOLOGY_SUFFIXES:
@@ -336,7 +460,10 @@ def create_app() -> FastAPI:
                 ) from error
 
             try:
-                baseline_genome = dashboard_state.replace_baseline(genome)
+                baseline_genome, session_instance_id = dashboard_state.replace_baseline(
+                    session_id,
+                    genome,
+                )
             except RuntimeError as error:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -344,6 +471,7 @@ def create_app() -> FastAPI:
                 ) from error
 
             dashboard_state.publish(
+                session_id,
                 {
                     "event": "topology_ingested",
                     "run_id": None,
@@ -362,7 +490,8 @@ def create_app() -> FastAPI:
                             ),
                         }
                     ],
-                }
+                },
+                session_instance_id=session_instance_id,
             )
             return TopologyUploadResponse(
                 status="ingested",
@@ -377,8 +506,9 @@ def create_app() -> FastAPI:
     async def stream_optimization(websocket: WebSocket) -> None:
         """Stream optimization events and retain the socket until it disconnects."""
         connected = False
+        session_id = _websocket_session_id(websocket)
         try:
-            await dashboard_state.connect(websocket)
+            await dashboard_state.connect(session_id, websocket)
             connected = True
             while True:
                 await websocket.receive_text()
@@ -386,7 +516,7 @@ def create_app() -> FastAPI:
             pass
         finally:
             if connected:
-                dashboard_state.disconnect(websocket)
+                dashboard_state.disconnect(session_id, websocket)
 
     return application
 
@@ -498,6 +628,8 @@ def _intent_translated_event(
 
 def _run_optimization(
     dashboard_state: DashboardState,
+    session_id: str,
+    session_instance_id: str,
     run_id: str,
     request: OptimizationRunRequest,
     intent_weights: IntentWeights,
@@ -532,6 +664,7 @@ def _run_optimization(
             engine,
         )
         dashboard_state.publish(
+            session_id,
             {
                 "event": "run_started",
                 "run_id": run_id,
@@ -563,7 +696,8 @@ def _run_optimization(
                         else []
                     ),
                 ],
-            }
+            },
+            session_instance_id=session_instance_id,
         )
 
         previous_best: ArchitectureGenome | None = None
@@ -586,6 +720,7 @@ def _run_optimization(
             )
 
             dashboard_state.publish(
+                session_id,
                 {
                     "event": "generation_complete",
                     "run_id": run_id,
@@ -599,7 +734,8 @@ def _run_optimization(
                     ),
                     "metrics": _serialize_metrics(best_record),
                     "logs": logs,
-                }
+                },
+                session_instance_id=session_instance_id,
             )
             previous_best = best_genome.model_copy(deep=True)
             previous_record = best_record.copy()
@@ -613,6 +749,7 @@ def _run_optimization(
         if not _is_feasible_architecture(best_record):
             infeasibility = _infeasibility_details(best_record)
             dashboard_state.publish(
+                session_id,
                 {
                     "event": "run_infeasible",
                     "run_id": run_id,
@@ -636,11 +773,13 @@ def _run_optimization(
                             "message": _infeasibility_log_message(infeasibility),
                         },
                     ],
-                }
+                },
+                session_instance_id=session_instance_id,
             )
             return
 
         dashboard_state.publish(
+            session_id,
             {
                 "event": "artifact_synthesis_started",
                 "run_id": run_id,
@@ -658,7 +797,8 @@ def _run_optimization(
                         ),
                     }
                 ],
-            }
+            },
+            session_instance_id=session_instance_id,
         )
         deployment_package = asyncio.run(
             _generate_deployment_package(
@@ -668,6 +808,7 @@ def _run_optimization(
         )
 
         dashboard_state.publish(
+            session_id,
             {
                 "event": "run_complete",
                 "run_id": run_id,
@@ -689,11 +830,13 @@ def _run_optimization(
                         ),
                     }
                 ],
-            }
+            },
+            session_instance_id=session_instance_id,
         )
     except Exception as error:
         LOGGER.exception("Optimization dashboard worker failed")
         dashboard_state.publish(
+            session_id,
             {
                 "event": "run_failed",
                 "run_id": run_id,
@@ -707,10 +850,15 @@ def _run_optimization(
                         "message": f"Optimization failed: {type(error).__name__}: {error}",
                     }
                 ],
-            }
+            },
+            session_instance_id=session_instance_id,
         )
     finally:
-        dashboard_state.finish_optimization(run_id)
+        dashboard_state.finish_optimization(
+            session_id,
+            session_instance_id,
+            run_id,
+        )
 
 
 def _build_baseline_genome() -> ArchitectureGenome:
