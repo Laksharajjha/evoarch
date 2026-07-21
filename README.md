@@ -75,6 +75,26 @@ flowchart LR
 
 > EvoArch intentionally withholds deployment synthesis when all candidates remain queue-saturated within the configured resource bounds. A plausible-looking YAML artifact is never treated as a valid result.
 
+## Topology Ingestion
+
+Dashboard uploads use `evoarch.api.infrastructure_parser`, a deterministic local parser. The upload path does **not** ask the LLM to interpret YAML, which makes ingestion predictable, fast, and token-free.
+
+| Source | Extracted signals |
+| --- | --- |
+| Docker Compose | Service names, `deploy.replicas`, CPU/memory limits, `depends_on`, links, and explicit service references. |
+| Kubernetes | Deployment replica counts, container resource limits, Services, and unambiguous environment-variable or URL references between declared services. |
+
+### Parser rules and defaults
+
+- Every discovered workload, worker, database, cache, and broker becomes a `ServiceGene`.
+- Replicas come from Kubernetes `spec.replicas` or Compose `deploy.replicas`; the fallback is `1`.
+- CPU limits are normalized to cores and memory limits to MiB. Missing limits default to `0.5` CPU and `512` MiB.
+- Routing defaults to `round_robin`; it changes only when a supported explicit policy is discovered.
+- EvoArch creates only unambiguous, directed service dependencies; shared networks alone do not create edges.
+- Duplicate edges, self-edges, cyclic graphs, malformed YAML, unsupported extensions, and files larger than 1 MB are rejected.
+
+> A parsed graph is a **model input**, not a production service-discovery inventory. Review inferred dependencies before treating an optimization result as an implementation plan.
+
 ## Quick Start
 
 ### Prerequisites
@@ -221,6 +241,91 @@ Only after the evolutionary engine finds a feasible candidate, the model generat
 
 EvoArch validates generated IaC against the mathematical genome before it reaches the dashboard. Validation checks include exact service naming, requested resource allocations, replica counts, and required artifact structure. Invalid model output is corrected or rejected; it is not silently deployed.
 
+## Deployment Artifact Validation
+
+The deployment package is a controlled output, not an unverified code-generation response.
+
+### ADR contract
+
+Every accepted ADR begins with a Markdown title and contains these exact headings:
+
+```text
+## Context
+## Decision
+## Mathematical Rationale
+## Consequences
+```
+
+Chaos Mode also requires:
+
+```text
+## Chaos Mitigation Strategy
+```
+
+The model is instructed to keep each section brief so large topologies do not cause response truncation. If the response is structurally incomplete, EvoArch normalizes or rejects it before publication.
+
+### Kubernetes and Terraform contract
+
+For Kubernetes, EvoArch parses the returned YAML and verifies that generated Deployment and Service resource names exactly match the selected service genome. It verifies replicas, CPU/memory requests and limits, selector alignment, and required workload structure.
+
+For Terraform, EvoArch checks that the generated resource declarations include the expected service names and mathematical capacity literals.
+
+When Chaos Mode is enabled, accepted Kubernetes artifacts must additionally include:
+
+- a `policy/v1` `PodDisruptionBudget`
+- Istio `DestinationRule` and `VirtualService` resources
+- liveness and readiness probes for every Deployment
+
+Terraform output must include equivalent Kubernetes resilience primitives and probe blocks.
+
+## HTTP API & Event Stream
+
+The dashboard is served monolithically by FastAPI. Browser requests use relative URLs, so the UI, REST API, and WebSocket stream are same-origin in local development and a single-service deployment.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /` | Serves the dashboard and establishes an HttpOnly browser session cookie. |
+| `HEAD /` | Lightweight uptime probe for Render, UptimeRobot, or similar monitors. |
+| `GET /api/status` | Returns the active optimization ID for the requesting browser session. |
+| `POST /api/verify-access` | Verifies the `X-Access-Code` dashboard credential. |
+| `POST /api/upload-topology` | Parses a `.yaml` or `.yml` topology into the caller's session workspace. |
+| `POST /api/run-optimization` | Starts an optimization run; requires `X-Access-Code`. |
+| `WS /ws/stream` | Streams topology, generation, artifact, and failure events for the caller's session only. |
+
+### Start a run
+
+```bash
+curl -X POST http://localhost:8000/api/run-optimization \
+  -H "Content-Type: application/json" \
+  -H "X-Access-Code: $ACCESS_CODE" \
+  -d '{
+    "user_prompt": "Reduce cost while preserving checkout latency and queue stability.",
+    "generation_count": 18,
+    "population_size": 24,
+    "baseline_qps": 120,
+    "chaos_mode": false
+  }'
+```
+
+The response is `202 Accepted` and contains a `run_id`. The mathematical work continues in a background thread; the browser receives its progress over `/ws/stream`.
+
+### WebSocket event contract
+
+The stream publishes JSON events such as:
+
+| Event | Meaning |
+| --- | --- |
+| `topology_ingested` | A deterministic parser accepted a new baseline genome. |
+| `intent_translated` | The AI Control Plane returned validated optimizer controls. |
+| `run_started` | A session-specific evolutionary run began. |
+| `generation_complete` | A Pareto generation finished with layout, metrics, and audit logs. |
+| `artifact_synthesis_started` | A feasible genome is being converted into an ADR and IaC package. |
+| `run_complete` | A validated deployment package is ready. |
+| `run_infeasible` | No queue-stable candidate was found under the active constraints. |
+| `run_failed` | The run stopped because of an operational or provider error. |
+
+Each layout event includes node utilization, arrival rate, configured/available replicas, saturation state, and dynamic edge latency. The UI maps this data into Cytoscape heatmaps and `SAT` path states.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and configure the provider you intend to use.
@@ -244,6 +349,48 @@ Copy `.env.example` to `.env` and configure the provider you intend to use.
 - Browser sessions receive isolated topology, run, graph, event-history, and WebSocket workspace state.
 - A disconnected session's workspace is removed from memory to avoid retaining stale Render process state.
 - API keys remain server-side in `.env`; the browser never receives model-provider credentials.
+
+## Troubleshooting
+
+### `401 Invalid Access DNA`
+
+The dashboard access code does not match `ACCESS_CODE` in the server environment. Update `.env`, restart Uvicorn, then enter the same value into the access gate.
+
+### `429 Too Many Requests`
+
+EvoArch enforces five optimization requests per minute per IP address and 12 per minute globally. Wait for the UI cooldown, then retry. Upload parsing does not call the LLM, but optimization requests do consume the protected quota.
+
+### `No feasible plan` or unbounded P99
+
+At least one queue has `λ ≥ cμ`. Lower the QPS target, choose a lower load multiplier, increase the replica cap, improve CPU allocations, or remove accidental high-fan-out dependencies from the topology.
+
+### Deployment synthesis is withheld
+
+This is intentional when every candidate remains saturated. EvoArch only sends feasible architectures to the deployment-artifact step.
+
+### `502 Unable to translate optimization intent`
+
+Verify the configured provider key, provider selector, model route, and account access. For Gemini, confirm `GEMINI_API_KEY`; for direct OpenAI, confirm `OPENAI_API_KEY`, `EVOARCH_AI_PROVIDER=openai`, and the configured model route.
+
+## Validation & Development
+
+Run lightweight syntax checks before deploying:
+
+```bash
+python -m py_compile evoarch/visualization/dashboard.py \
+  evoarch/api/ai_agent.py \
+  evoarch/api/infrastructure_parser.py \
+  evoarch/models/genome.py \
+  evoarch/simulation/traffic.py \
+  evoarch/optimizer/fitness.py \
+  evoarch/engine/evolution.py
+```
+
+The dashboard template is a self-contained HTML document. Its embedded JavaScript can be checked with:
+
+```bash
+node --check <(awk '/<script>/{inside=1; next} /<\/script>/{inside=0} inside' evoarch/visualization/templates/index.html)
+```
 
 ## Project Layout
 
