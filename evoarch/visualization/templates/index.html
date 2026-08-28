@@ -372,6 +372,7 @@
 
       /* ── Trial-exhausted modal ─────────────────────────────────────── */
       #trial-modal {
+      #trial-modal, #onboarding-modal {
         position: fixed;
         z-index: 9998;
         inset: 0;
@@ -382,6 +383,7 @@
         backdrop-filter: blur(8px);
         -webkit-backdrop-filter: blur(8px);
       }
+      #trial-modal[hidden], #onboarding-modal[hidden] { display: none; }
 
       #trial-modal[hidden] { display: none; }
 
@@ -477,6 +479,32 @@
       </div>
     </div>
 
+    <!-- ── Onboarding / Quick Start Modal ─────────────────────────────────────────── -->
+    <div id="onboarding-modal" hidden>
+      <div class="w-full max-w-lg border border-[#30343b] bg-[#0b0c0e] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.58)] relative">
+        <button id="onboarding-close-top" class="absolute top-4 right-4 text-[#858b95] hover:text-[#e5e7eb] focus:outline-none" aria-label="Close">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <p class="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[#f59e0b] mb-4">Quick Start Guide</p>
+        <p class="font-mono text-[13px] text-[#e5e7eb] font-semibold mb-4">Confused where to start?</p>
+        <p class="font-mono text-[11px] text-[#858b95] mb-5">Follow these 5 simple steps to run your first autonomous architecture optimization:</p>
+        
+        <ol class="flex flex-col gap-3 font-mono text-[10.5px] text-[#858b95] mb-6 pl-5" style="list-style-type: decimal;">
+          <li><strong class="text-[#e5e7eb]">Ingest YAML:</strong> Click the <code class="bg-[#1f2228] px-1 py-0.5 rounded text-[#f59e0b]">[ INGEST YAML ]</code> button in the top right to upload a Docker Compose or Kubernetes topology. You can use the included <code class="bg-[#1f2228] px-1 py-0.5 rounded text-[#f3f4f6]">Sample_yaml_file_for_testing.yaml</code>.</li>
+          <li><strong class="text-[#e5e7eb]">Set Intent:</strong> Enter an optimization intent in the console (e.g., "Optimize for low latency" or "Reduce infrastructure costs by 20%").</li>
+          <li><strong class="text-[#e5e7eb]">Configure:</strong> Tweak the generations, population size, and baseline QPS parameters if desired.</li>
+          <li><strong class="text-[#e5e7eb]">Trigger:</strong> Click the <code class="bg-[#e5e7eb] text-[#0b0c0e] font-sans px-1 py-0.5 rounded uppercase font-semibold">Trigger Autonomous Optimization</code> button to launch the evolutionary algorithm.</li>
+          <li><strong class="text-[#e5e7eb]">Observe:</strong> Watch the dashboard as it simulates the queueing models, evolves the architecture, and synthesizes the final Infrastructure-as-Code.</li>
+        </ol>
+
+        <div class="flex">
+          <button id="onboarding-close-btn" class="h-9 w-full border border-[#f59e0b] bg-transparent font-sans text-[10px] font-semibold uppercase text-[#f59e0b] hover:bg-[#f59e0b] hover:text-[#0b0c0e] transition-colors">Let's Go</button>
+        </div>
+      </div>
+    </div>
+
     <div id="appShell" class="auth-gated flex h-screen min-h-0 flex-col">
       <header class="header-row relative z-20 flex h-12 shrink-0 items-center gap-3 border-b border-[#1f2228] bg-[#0b0c0e] px-3 sm:px-4">
         <a href="/" class="flex shrink-0 items-center gap-2 border-r border-[#1f2228] pr-3" aria-label="EvoArch Core home">
@@ -520,6 +548,10 @@
             <a href="/auth/logout" class="user-menu-item" role="menuitem">[ Sign Out ]</a>
           </div>
         </div>
+
+        <button id="help-btn" type="button" class="ml-auto flex items-center justify-center w-6 h-6 rounded-full border border-[#454a53] text-[#818792] hover:bg-[#1f2228] hover:text-[#f3f4f6]" title="Quick Start Guide">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        </button>
 
         <button id="themeToggle" type="button" class="h-8 shrink-0 border border-[#1f2228] bg-[#0f1013] px-2.5 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#c4c8ce] transition-colors hover:border-[#717780] hover:text-[#ffffff] focus:outline-none focus:ring-1 focus:ring-[#717780]" aria-label="Switch to light mode">[ ☼ LIGHT ]</button>
       </header>
@@ -1408,10 +1440,31 @@
           userName.textContent = data.name || data.email;
           userChip.classList.add("visible");
           updateTrialBadge(data);
+
+          // Show onboarding for first-time users
+          if (!localStorage.getItem("evoarch_onboarded")) {
+            document.getElementById("onboarding-modal").hidden = false;
+          }
         } catch (_) {
           // Network error — leave the login gate visible.
         }
       }
+
+      // ── Onboarding Modal ──────────────────────────────────────────────────
+      const onboardingModal = document.getElementById("onboarding-modal");
+      const onboardingCloseBtn = document.getElementById("onboarding-close-btn");
+      const onboardingCloseTop = document.getElementById("onboarding-close-top");
+      const helpBtn = document.getElementById("help-btn");
+
+      function hideOnboarding() {
+        onboardingModal.hidden = true;
+        localStorage.setItem("evoarch_onboarded", "true");
+      }
+      onboardingCloseBtn.addEventListener("click", hideOnboarding);
+      onboardingCloseTop.addEventListener("click", hideOnboarding);
+      helpBtn.addEventListener("click", () => {
+        onboardingModal.hidden = false;
+      });
 
       // ── User chip / menu ──────────────────────────────────────────────────
       userChip.addEventListener("click", (e) => {
