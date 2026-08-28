@@ -1823,14 +1823,8 @@
       });
       terminal.addEventListener("scroll", updateAuditAutoScroll, { passive: true });
       optimizationPrompt.addEventListener("input", resizeOptimizationPrompt);
-      accessInput.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        void verifyAccessCode();
-      });
       resizeOptimizationPrompt();
       setTopologyAvailability(false);
-      window.requestAnimationFrame(() => accessInput.focus());
 
       ingestButton.addEventListener("click", () => {
         if (activeRunId || runButton.disabled) {
