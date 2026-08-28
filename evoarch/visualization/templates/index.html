@@ -242,37 +242,148 @@
         transition: filter 220ms ease;
       }
 
-      #appShell.access-gated {
+      #appShell.auth-gated {
         filter: blur(10px);
         pointer-events: none;
         user-select: none;
       }
 
-      #access-gate {
+      /* ── Login overlay ─────────────────────────────────────────────── */
+      #login-gate {
         position: fixed;
         z-index: 9999;
         inset: 0;
         display: grid;
         place-items: center;
         padding: 1.5rem;
-        background: rgba(8, 9, 11, 0.74);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
+        background: rgba(8, 9, 11, 0.82);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         opacity: 1;
         transition: opacity 240ms ease;
       }
 
-      #access-gate.is-unlocking {
+      #login-gate.is-hiding {
         opacity: 0;
         pointer-events: none;
       }
 
-      #access-gate[hidden] { display: none; }
+      #login-gate[hidden] { display: none; }
 
-      #access-input.access-denied {
-        border-color: #ef4444;
-        box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.34), 0 0 20px rgba(127, 29, 29, 0.3);
+      .google-btn {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.5rem 1.125rem;
+        background: #fff;
+        color: #1f2937;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        border: none;
+        border-radius: 2px;
+        cursor: pointer;
+        transition: box-shadow 150ms ease;
+        text-decoration: none;
       }
+
+      .google-btn:hover {
+        box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      }
+
+      /* ── User avatar chip ──────────────────────────────────────────── */
+      #user-chip {
+        display: none;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        position: relative;
+      }
+
+      #user-chip.visible { display: flex; }
+
+      #user-avatar {
+        width: 1.5rem;
+        height: 1.5rem;
+        border-radius: 9999px;
+        object-fit: cover;
+        border: 1px solid #30343b;
+      }
+
+      #user-menu {
+        display: none;
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        min-width: 180px;
+        background: #111317;
+        border: 1px solid #30343b;
+        z-index: 1000;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      }
+
+      #user-menu.open { display: block; }
+
+      .user-menu-item {
+        display: block;
+        padding: 0.5rem 0.875rem;
+        font-size: 0.6875rem;
+        font-family: monospace;
+        color: #c4c8ce;
+        cursor: pointer;
+        text-decoration: none;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+        letter-spacing: 0.04em;
+      }
+
+      .user-menu-item:hover { background: #1a1d22; color: #f3f4f6; }
+
+      /* ── Free-trial badge ──────────────────────────────────────────── */
+      #trial-badge {
+        display: none;
+        font-family: monospace;
+        font-size: 0.5625rem;
+        letter-spacing: 0.07em;
+        color: #f59e0b;
+        border: 1px solid rgba(245,158,11,0.3);
+        padding: 0.1rem 0.4rem;
+        white-space: nowrap;
+      }
+
+      #trial-badge.visible { display: inline-block; }
+      #trial-badge.exhausted { color: #ef4444; border-color: rgba(239,68,68,0.3); }
+
+      /* ── Settings modal ────────────────────────────────────────────── */
+      #settings-modal {
+        position: fixed;
+        z-index: 9998;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        background: rgba(8,9,11,0.74);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      #settings-modal[hidden] { display: none; }
+
+      /* ── Trial-exhausted modal ─────────────────────────────────────── */
+      #trial-modal {
+        position: fixed;
+        z-index: 9998;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        background: rgba(8,9,11,0.74);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      #trial-modal[hidden] { display: none; }
 
       #ingestButton.needs-topology {
         border-color: #f59e0b;
@@ -311,16 +422,62 @@
     </style>
   </head>
   <body class="h-screen overflow-hidden bg-[#0b0c0e] font-sans text-[#e5e7eb] antialiased">
-    <div id="access-gate" role="dialog" aria-modal="true" aria-labelledby="access-gate-title">
-      <div class="w-full max-w-sm border border-[#30343b] bg-[#0b0c0e] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.58)]">
-        <p id="access-gate-title" class="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[#fbbf24]">EvoArch // Access Gate</p>
-        <p class="mt-2 font-mono text-[10px] leading-5 text-[#858b95]">Enter the access DNA to activate this optimization control plane.</p>
-        <input id="access-input" class="mt-5 h-10 w-full border border-[#30343b] bg-[#08090b] px-3 font-mono text-[11px] tracking-[0.06em] text-[#e5e7eb] outline-none transition-[border-color,box-shadow] placeholder:text-[#555b66] focus:border-[#f59e0b] focus:ring-1 focus:ring-[#f59e0b] disabled:cursor-wait disabled:opacity-60" type="password" autocomplete="off" placeholder="[ ENTER ACCESS DNA ]" aria-label="Access DNA" />
-        <p id="access-status" class="mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#555b66]" role="status" aria-live="polite">Press Enter to verify</p>
+
+    <!-- ── Google Login Overlay ──────────────────────────────────────────── -->
+    <div id="login-gate" role="dialog" aria-modal="true" aria-labelledby="login-gate-title">
+      <div class="w-full max-w-sm border border-[#30343b] bg-[#0b0c0e] p-7 shadow-[0_24px_80px_rgba(0,0,0,0.58)] flex flex-col items-center gap-5">
+        <div class="flex flex-col items-center gap-2 text-center">
+          <span class="grid h-8 w-8 place-items-center border border-[#454a53] bg-[#111317] font-mono text-sm font-bold text-[#f3f4f6]">E</span>
+          <p id="login-gate-title" class="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[#fbbf24]">EvoArch // Control Plane</p>
+          <p class="font-mono text-[10px] leading-5 text-[#858b95]">Sign in to access the evolutionary microservice optimizer.</p>
+        </div>
+        <a href="/auth/login" class="google-btn">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.25-.164-1.84H9v3.48h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/></svg>
+          Sign in with Google
+        </a>
+        <p class="font-mono text-[9px] text-[#555b66] text-center leading-4">New users get <span class="text-[#f59e0b]">2 free optimization runs</span>.<br/>Add your own API key for unlimited access.</p>
       </div>
     </div>
 
-    <div id="appShell" class="access-gated flex h-screen min-h-0 flex-col">
+    <!-- ── Settings Modal ────────────────────────────────────────────────── -->
+    <div id="settings-modal" hidden>
+      <div class="w-full max-w-sm border border-[#30343b] bg-[#0b0c0e] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.58)]">
+        <div class="flex items-center justify-between mb-4">
+          <p class="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[#fbbf24]">Settings // API Key</p>
+          <button id="settings-close" class="font-mono text-[10px] text-[#555b66] hover:text-[#e5e7eb]">✕</button>
+        </div>
+        <p class="font-mono text-[10px] text-[#858b95] mb-4 leading-5">Your key is encrypted before storage and only used for your own optimization runs. It is never exposed to the browser.</p>
+        <div class="flex flex-col gap-3">
+          <div>
+            <label class="font-mono text-[9px] uppercase tracking-[0.08em] text-[#666c76]">Provider</label>
+            <select id="key-provider" class="mt-1.5 h-9 w-full border border-[#30343b] bg-[#08090b] px-3 font-mono text-[11px] text-[#e5e7eb] outline-none focus:border-[#f59e0b]">
+              <option value="gemini">Gemini</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </div>
+          <div>
+            <label class="font-mono text-[9px] uppercase tracking-[0.08em] text-[#666c76]">API Key</label>
+            <input id="key-input" type="password" autocomplete="off" placeholder="Paste your API key here" class="mt-1.5 h-9 w-full border border-[#30343b] bg-[#08090b] px-3 font-mono text-[11px] text-[#e5e7eb] outline-none focus:border-[#f59e0b] focus:ring-1 focus:ring-[#f59e0b]" />
+          </div>
+          <button id="save-key-btn" class="h-9 w-full border border-[#ffffff] bg-[#ffffff] font-sans text-[10px] font-semibold uppercase tracking-[0.06em] text-[#0b0c0e] hover:bg-[#e2e8f0]">Save Key</button>
+          <p id="key-save-status" class="font-mono text-[9px] uppercase tracking-[0.08em] text-[#555b66] min-h-4" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Trial Exhausted Modal ─────────────────────────────────────────── -->
+    <div id="trial-modal" hidden>
+      <div class="w-full max-w-sm border border-[#ef4444] bg-[#0b0c0e] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.58)]">
+        <p class="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-[#ef4444] mb-2">Free Trial Exhausted</p>
+        <p class="font-mono text-[10px] text-[#858b95] leading-5 mb-4">You've used your free optimization runs. Add your own Gemini or OpenAI API key in Settings to continue — it's free to get one.</p>
+        <div class="flex gap-2">
+          <button id="trial-open-settings" class="h-9 flex-1 border border-[#ffffff] bg-[#ffffff] font-sans text-[10px] font-semibold uppercase text-[#0b0c0e] hover:bg-[#e2e8f0]">Open Settings</button>
+          <button id="trial-modal-close" class="h-9 flex-1 border border-[#30343b] bg-transparent font-mono text-[10px] uppercase tracking-[0.06em] text-[#858b95] hover:text-[#e5e7eb]">Dismiss</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="appShell" class="auth-gated flex h-screen min-h-0 flex-col">
       <header class="header-row relative z-20 flex h-12 shrink-0 items-center gap-3 border-b border-[#1f2228] bg-[#0b0c0e] px-3 sm:px-4">
         <a href="/" class="flex shrink-0 items-center gap-2 border-r border-[#1f2228] pr-3" aria-label="EvoArch Core home">
           <span class="grid h-6 w-6 place-items-center border border-[#454a53] bg-[#111317] font-mono text-[11px] font-bold text-[#f3f4f6]">E</span>
@@ -352,6 +509,18 @@
         <button id="runButton" type="button" class="h-8 shrink-0 border border-[#ffffff] bg-[#ffffff] px-3 font-sans text-[10px] font-semibold uppercase tracking-[0.06em] text-[#0b0c0e] transition-colors hover:bg-[#e2e8f0] focus:outline-none focus:ring-1 focus:ring-[#ffffff] disabled:cursor-wait disabled:opacity-50">
           <span id="runButtonLabel">Trigger Autonomous Optimization</span>
         </button>
+
+        <!-- ── Trial badge + User chip ────────────────────────────────── -->
+        <span id="trial-badge"></span>
+        <div id="user-chip" aria-haspopup="true" aria-expanded="false">
+          <img id="user-avatar" src="" alt="User avatar" width="24" height="24" />
+          <span id="user-name" class="font-mono text-[10px] text-[#c4c8ce] hidden lg:inline"></span>
+          <div id="user-menu" role="menu">
+            <button class="user-menu-item" id="menu-settings" role="menuitem">[ API Key Settings ]</button>
+            <a href="/auth/logout" class="user-menu-item" role="menuitem">[ Sign Out ]</a>
+          </div>
+        </div>
+
         <button id="themeToggle" type="button" class="h-8 shrink-0 border border-[#1f2228] bg-[#0f1013] px-2.5 font-mono text-[9px] font-semibold tracking-[0.06em] text-[#c4c8ce] transition-colors hover:border-[#717780] hover:text-[#ffffff] focus:outline-none focus:ring-1 focus:ring-[#717780]" aria-label="Switch to light mode">[ ☼ LIGHT ]</button>
       </header>
 
@@ -524,9 +693,22 @@
     <script>
       const terminal = document.getElementById("terminal");
       const appShell = document.getElementById("appShell");
-      const accessGate = document.getElementById("access-gate");
-      const accessInput = document.getElementById("access-input");
-      const accessStatus = document.getElementById("access-status");
+      const loginGate = document.getElementById("login-gate");
+      const settingsModal = document.getElementById("settings-modal");
+      const trialModal = document.getElementById("trial-modal");
+      const settingsClose = document.getElementById("settings-close");
+      const trialBadge = document.getElementById("trial-badge");
+      const userChip = document.getElementById("user-chip");
+      const userAvatar = document.getElementById("user-avatar");
+      const userName = document.getElementById("user-name");
+      const userMenu = document.getElementById("user-menu");
+      const menuSettings = document.getElementById("menu-settings");
+      const keyProviderSelect = document.getElementById("key-provider");
+      const keyInput = document.getElementById("key-input");
+      const saveKeyBtn = document.getElementById("save-key-btn");
+      const keySaveStatus = document.getElementById("key-save-status");
+      const trialOpenSettings = document.getElementById("trial-open-settings");
+      const trialModalClose = document.getElementById("trial-modal-close");
       const autoScrollStatus = document.getElementById("autoScrollStatus");
       const runButton = document.getElementById("runButton");
       const runButtonLabel = document.getElementById("runButtonLabel");
@@ -574,7 +756,8 @@
       let isAuditAutoScrollEnabled = true;
       const iacPath = document.getElementById("iacPath");
       let rateLimitCooldownTimer = null;
-      let activeAccessCode = "";
+      let currentUser = null; // populated by initAuth()
+
 
       let initialTheme = "dark";
       try {
@@ -1184,59 +1367,124 @@
         }
       }
 
-      function flashAccessDenied() {
-        accessInput.value = "";
-        accessInput.classList.add("access-denied");
-        accessStatus.textContent = "Invalid Access DNA";
-        accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#ef4444]";
-        window.setTimeout(() => {
-          accessInput.classList.remove("access-denied");
-          accessInput.focus();
-        }, 500);
-      }
 
-      function unlockDashboard(accessCode) {
-        activeAccessCode = accessCode;
-        accessStatus.textContent = "Access verified";
-        accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#10b981]";
-        appShell.classList.remove("access-gated");
-        accessGate.classList.add("is-unlocking");
-        window.setTimeout(() => {
-          accessGate.hidden = true;
-        }, 240);
-      }
+      // ── Auth: check session and render UI state ───────────────────────────
 
-      async function verifyAccessCode() {
-        const accessCode = accessInput.value.trim();
-        if (!accessCode) {
-          flashAccessDenied();
+      function updateTrialBadge(user) {
+        if (!user) return;
+        if (user.has_own_key) {
+          trialBadge.classList.remove("visible", "exhausted");
           return;
         }
-
-        accessInput.disabled = true;
-        accessStatus.textContent = "Verifying Access DNA";
-        accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#f59e0b]";
-        try {
-          const response = await fetch("/api/verify-access", {
-            method: "POST",
-            headers: { "X-Access-Code": accessCode },
-          });
-          if (response.ok) {
-            unlockDashboard(accessCode);
-            return;
-          }
-          if (response.status === 401) {
-            flashAccessDenied();
-            return;
-          }
-          throw new Error("Access verification is temporarily unavailable.");
-        } catch (error) {
-          accessStatus.textContent = error.message;
-          accessStatus.className = "mt-2 min-h-4 font-mono text-[9px] uppercase tracking-[0.08em] text-[#ef4444]";
-        } finally {
-          accessInput.disabled = false;
+        const remaining = user.max_free_runs - user.free_runs_used;
+        trialBadge.textContent = `${user.free_runs_used}/${user.max_free_runs} FREE`;
+        trialBadge.classList.add("visible");
+        if (remaining <= 0) {
+          trialBadge.classList.add("exhausted");
+        } else {
+          trialBadge.classList.remove("exhausted");
         }
       }
+
+      async function initAuth() {
+        try {
+          const res = await fetch("/auth/me");
+          const data = await res.json();
+          if (!data.authenticated) {
+            // Show the login overlay; keep the dashboard blurred.
+            return;
+          }
+          // User is logged in — unlock the dashboard.
+          currentUser = data;
+          loginGate.classList.add("is-hiding");
+          window.setTimeout(() => { loginGate.hidden = true; }, 240);
+          appShell.classList.remove("auth-gated");
+
+          // Populate the user chip.
+          if (data.picture) {
+            userAvatar.src = data.picture;
+            userAvatar.style.display = "block";
+          }
+          userName.textContent = data.name || data.email;
+          userChip.classList.add("visible");
+          updateTrialBadge(data);
+        } catch (_) {
+          // Network error — leave the login gate visible.
+        }
+      }
+
+      // ── User chip / menu ──────────────────────────────────────────────────
+      userChip.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const open = userMenu.classList.toggle("open");
+        userChip.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+
+      document.addEventListener("click", () => {
+        userMenu.classList.remove("open");
+        userChip.setAttribute("aria-expanded", "false");
+      });
+
+      menuSettings.addEventListener("click", () => {
+        userMenu.classList.remove("open");
+        settingsModal.hidden = false;
+        keyInput.focus();
+      });
+
+      // ── Settings modal ────────────────────────────────────────────────────
+      settingsClose.addEventListener("click", () => {
+        settingsModal.hidden = true;
+        keySaveStatus.textContent = "";
+      });
+
+      settingsModal.addEventListener("click", (e) => {
+        if (e.target === settingsModal) settingsModal.hidden = true;
+      });
+
+      saveKeyBtn.addEventListener("click", async () => {
+        const key = keyInput.value.trim();
+        if (!key) { keySaveStatus.textContent = "Key must not be blank."; return; }
+        saveKeyBtn.disabled = true;
+        keySaveStatus.textContent = "Saving…";
+        keySaveStatus.className = "font-mono text-[9px] uppercase tracking-[0.08em] text-[#f59e0b] min-h-4";
+        try {
+          const res = await fetch("/api/user/keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider: keyProviderSelect.value, api_key: key }),
+          });
+          if (res.ok) {
+            keySaveStatus.textContent = "Key saved successfully.";
+            keySaveStatus.className = "font-mono text-[9px] uppercase tracking-[0.08em] text-[#10b981] min-h-4";
+            keyInput.value = "";
+            // Refresh the user state so the trial badge updates.
+            const me = await fetch("/auth/me").then(r => r.json());
+            if (me.authenticated) { currentUser = me; updateTrialBadge(me); }
+          } else {
+            const body = await res.json().catch(() => ({}));
+            keySaveStatus.textContent = body.detail || "Failed to save key.";
+            keySaveStatus.className = "font-mono text-[9px] uppercase tracking-[0.08em] text-[#ef4444] min-h-4";
+          }
+        } catch (_) {
+          keySaveStatus.textContent = "Network error — try again.";
+          keySaveStatus.className = "font-mono text-[9px] uppercase tracking-[0.08em] text-[#ef4444] min-h-4";
+        } finally {
+          saveKeyBtn.disabled = false;
+        }
+      });
+
+      // ── Trial-exhausted modal ─────────────────────────────────────────────
+      function showTrialExhausted() {
+        trialModal.hidden = false;
+      }
+
+      trialModalClose.addEventListener("click", () => { trialModal.hidden = true; });
+      trialOpenSettings.addEventListener("click", () => {
+        trialModal.hidden = true;
+        settingsModal.hidden = false;
+        keyInput.focus();
+      });
+
 
       function clearRunButtonFeedback() {
         runButton.classList.remove("optimization-request-active", "rate-limit-cooldown");
@@ -1677,7 +1925,6 @@
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "X-Access-Code": activeAccessCode,
             },
             body: JSON.stringify(request)
           });
@@ -1687,11 +1934,23 @@
             error.isRateLimited = true;
             throw error;
           }
+          if (response.status === 402) {
+            // Free trial exhausted — show the modal to prompt API key entry.
+            resetShadowGraph();
+            releaseRunButton();
+            chaosMode.disabled = false;
+            showTrialExhausted();
+            return;
+          }
           if (!response.ok) throw new Error(payload.detail || "Unable to start optimization");
           activeRunId = payload.run_id;
+          // Refresh trial badge after a successful run.
+          fetch("/auth/me").then(r => r.json()).then(me => {
+            if (me.authenticated) { currentUser = me; updateTrialBadge(me); }
+          });
           appendLog({
             level: "info",
-            message: `Requested run ${payload.run_id.slice(0, 8)}${request.chaos_mode ? " with Chaos Mode" : ""} with intent: “${prompt}”`
+            message: `Requested run ${payload.run_id.slice(0, 8)}${request.chaos_mode ? " with Chaos Mode" : ""} with intent: "${prompt}"`
           });
         } catch (error) {
           resetShadowGraph();
@@ -1719,6 +1978,7 @@
       }
 
       appendLog({ level: "info", message: "EvoArch Core initialized. Awaiting a stream event or autonomous execution request." });
+      void initAuth();
       connectSocket();
     </script>
   </body>

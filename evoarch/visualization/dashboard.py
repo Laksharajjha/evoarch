@@ -1,6 +1,7 @@
 """Live FastAPI dashboard for EvoArch optimization runs."""
 
 import asyncio
+import contextlib
 import logging
 import os
 from collections import deque
@@ -18,7 +19,6 @@ import yaml
 from fastapi import (
     FastAPI,
     File,
-    Header,
     HTTPException,
     Request,
     UploadFile,
@@ -26,7 +26,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from dotenv import load_dotenv
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -34,7 +34,10 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from evoarch.api.ai_agent import AIAgentError, EvoArchAIAgent, IntentWeights
+from evoarch.api.auth import get_current_user, router as auth_router
 from evoarch.api.infrastructure_parser import parse_infrastructure_to_genome
+from evoarch.db.database import create_db_and_tables, decrypt_key, get_session
+from evoarch.db.models import User
 from evoarch.engine.evolution import EvolutionEngine, MutationStrategy
 from evoarch.models.genome import ArchitectureGenome, EdgeGene, ServiceGene
 from evoarch.optimizer.fitness import FitnessRecord, build_pareto_fitness_records
@@ -47,9 +50,9 @@ MAX_TOPOLOGY_UPLOAD_BYTES = 1_000_000
 INGESTION_PROBE_QPS = 1.0
 EDGE_LABEL_QUEUE_DELAY_THRESHOLD_MS = 1.0
 SUPPORTED_TOPOLOGY_SUFFIXES = frozenset({".yaml", ".yml"})
-ACCESS_CODE = os.getenv("ACCESS_CODE", "EVO-JUDGE-26")
 SESSION_COOKIE_NAME = "evoarch_session"
 SESSION_HISTORY_LIMIT = 250
+MAX_FREE_RUNS = int(os.environ.get("MAX_FREE_RUNS", "2"))
 limiter = Limiter(key_func=get_remote_address)
 
 
@@ -86,14 +89,6 @@ class TopologyUploadResponse(BaseModel):
     service_count: int
     edge_count: int
 
-
-def _require_access_code(x_access_code: str | None) -> None:
-    """Reject protected control-plane calls without the configured access code."""
-    if x_access_code != ACCESS_CODE:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Access DNA",
-        )
 
 
 def _normalize_session_id(candidate: str | None) -> str:
@@ -334,11 +329,19 @@ class DashboardState:
 
 def create_app() -> FastAPI:
     """Build the FastAPI application used by the EvoArch dashboard."""
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):  # type: ignore[type-arg]
+        create_db_and_tables()
+        yield
+
     application = FastAPI(
         title="EvoArch Control Center",
         version="1.0.0",
         description="Live evolutionary microservice topology optimization.",
+        lifespan=lifespan,
     )
+    application.include_router(auth_router)
     dashboard_state = DashboardState(_build_baseline_genome())
     application.state.dashboard_state = dashboard_state
     application.state.limiter = limiter
@@ -370,14 +373,6 @@ def create_app() -> FastAPI:
         """Expose the requesting browser session's active optimization worker."""
         return {"active_run_id": dashboard_state.active_run_id(_http_session_id(request))}
 
-    @application.post("/api/verify-access")
-    async def verify_access(
-        x_access_code: str | None = Header(None),
-    ) -> dict[str, str]:
-        """Verify that a dashboard user holds the current access code."""
-        _require_access_code(x_access_code)
-        return {"status": "authenticated"}
-
     @application.post(
         "/api/run-optimization",
         response_model=OptimizationRunResponse,
@@ -388,21 +383,57 @@ def create_app() -> FastAPI:
     async def run_optimization(
         request: Request,
         optimization_request: OptimizationRunRequest,
-        x_access_code: str | None = Header(None),
     ) -> OptimizationRunResponse:
         """Translate intent, then schedule its constrained optimization worker."""
-        _require_access_code(x_access_code)
+        # ── Auth: require a valid Google login session ──
+        user: User = get_current_user(request)
+
+        # ── Key resolution: free trial → own key → 402 ──
+        resolved_api_key: str | None = None
+        resolved_provider: str | None = None
+        has_own_key = bool(user.gemini_key_enc or user.openai_key_enc)
+
+        if has_own_key:
+            # Use the user's own stored key.
+            if user.gemini_key_enc:
+                resolved_api_key = decrypt_key(user.gemini_key_enc)
+                resolved_provider = "gemini"
+            elif user.openai_key_enc:
+                resolved_api_key = decrypt_key(user.openai_key_enc)
+                resolved_provider = "openai"
+        elif user.free_runs_used < MAX_FREE_RUNS:
+            # Still within the free trial — use the owner's server-side key.
+            resolved_api_key = None  # EvoArchAIAgent will fall back to env key
+            resolved_provider = None
+        else:
+            # Free trial exhausted and no own key.
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="free_trial_exhausted",
+            )
+
         session_id = _http_session_id(request)
         try:
             intent_weights = await _translate_intent_to_weights(
                 optimization_request.user_prompt,
                 chaos_mode=optimization_request.chaos_mode,
+                api_key=resolved_api_key,
+                provider=resolved_provider,
             )
         except (AIAgentError, ValidationError, TypeError, ValueError) as error:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Unable to translate optimization intent: {error}",
             ) from error
+
+        # Increment free-trial counter only after a successful intent translation.
+        if not has_own_key:
+            with get_session() as db:
+                db_user = db.get(User, user.id)
+                if db_user is not None:
+                    db_user.free_runs_used += 1
+                    db.add(db_user)
+                    db.commit()
 
         try:
             run_id = dashboard_state.start_optimization(
@@ -530,9 +561,11 @@ async def _translate_intent_to_weights(
     user_prompt: str,
     *,
     chaos_mode: bool = False,
+    api_key: str | None = None,
+    provider: str | None = None,
 ) -> IntentWeights:
     """Call the AI control plane and revalidate its boundary-safe output."""
-    agent = EvoArchAIAgent()
+    agent = EvoArchAIAgent(api_key=api_key, provider=provider)  # type: ignore[arg-type]
     try:
         translated_weights = await agent.translate_intent_to_weights(
             user_prompt,
